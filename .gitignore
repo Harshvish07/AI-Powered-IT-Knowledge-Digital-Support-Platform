@@ -1,0 +1,29 @@
+# Environment
+.env
+.env.local
+
+# Node / frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/playwright-report/
+frontend/test-results/
+frontend/next-env.d.ts
+*.tsbuildinfo
+
+# Python / backend
+backend/__pycache__/
+backend/**/__pycache__/
+backend/.venv/
+backend/venv/
+backend/.pytest_cache/
+backend/.mypy_cache/
+backend/.ruff_cache/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code session state
+.claude/
