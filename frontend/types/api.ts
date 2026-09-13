@@ -10,6 +10,7 @@ export interface UserPublic {
   full_name: string;
   role: UserRole;
   is_active: boolean;
+  created_at: string;
 }
 
 export interface TokenResponse {
@@ -112,4 +113,37 @@ export interface TicketPublic {
 
 export interface TicketDetail extends TicketPublic {
   comments: TicketCommentPublic[];
+}
+
+export interface DailyCount {
+  date: string;
+  count: number;
+}
+
+export interface DashboardMetrics {
+  total_users: number;
+  active_users: number;
+  total_documents: number;
+  ready_documents: number;
+  failed_documents: number;
+  total_tickets: number;
+  open_tickets: number;
+  in_progress_tickets: number;
+  resolved_tickets: number;
+  ai_questions: number;
+  tickets_by_status: Record<TicketStatus, number>;
+  tickets_by_category: Record<TicketCategory, number>;
+  documents_by_status: Record<DocumentStatus, number>;
+  ai_questions_by_day: DailyCount[];
+}
+
+export interface AdminConversationSummary {
+  id: string;
+  user_id: string;
+  user_name: string | null;
+  user_email: string | null;
+  title: string;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
 }

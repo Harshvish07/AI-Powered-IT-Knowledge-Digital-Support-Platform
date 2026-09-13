@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.ticket import Ticket, TicketCategory, TicketPriority, TicketStatus
@@ -8,6 +8,26 @@ from app.models.ticket import Ticket, TicketCategory, TicketPriority, TicketStat
 
 def get_by_id(db: Session, ticket_id: uuid.UUID) -> Ticket | None:
     return db.get(Ticket, ticket_id)
+
+
+def count_all(db: Session) -> int:
+    return db.scalar(select(func.count()).select_from(Ticket)) or 0
+
+
+def count_by_status(db: Session) -> dict[TicketStatus, int]:
+    counts = {status: 0 for status in TicketStatus}
+    stmt = select(Ticket.status, func.count()).group_by(Ticket.status)
+    for ticket_status, count in db.execute(stmt):
+        counts[ticket_status] = count
+    return counts
+
+
+def count_by_category(db: Session) -> dict[TicketCategory, int]:
+    counts = {category: 0 for category in TicketCategory}
+    stmt = select(Ticket.category, func.count()).group_by(Ticket.category)
+    for category, count in db.execute(stmt):
+        counts[category] = count
+    return counts
 
 
 def list_for_user(

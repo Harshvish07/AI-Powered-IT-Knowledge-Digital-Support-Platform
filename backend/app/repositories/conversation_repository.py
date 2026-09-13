@@ -32,6 +32,13 @@ def list_for_user(db: Session, user_id: uuid.UUID) -> list[Conversation]:
     return list(db.scalars(stmt))
 
 
+def list_all(db: Session) -> list[Conversation]:
+    """Admin-only: every conversation, most recently active first — used only
+    for metadata (see api/admin.py); message content is never exposed here."""
+    stmt = select(Conversation).order_by(Conversation.updated_at.desc())
+    return list(db.scalars(stmt))
+
+
 def create(db: Session, *, user_id: uuid.UUID, title: str) -> Conversation:
     conversation = Conversation(user_id=user_id, title=title)
     db.add(conversation)

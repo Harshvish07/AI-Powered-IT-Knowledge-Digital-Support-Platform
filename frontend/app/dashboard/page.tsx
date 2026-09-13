@@ -34,7 +34,7 @@ export default function DashboardPage() {
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <ProfileCard />
           <SystemStatusCard />
-          <StatCard title="Phase" value="5 / 9" description="IT Support Ticketing" />
+          <StatCard title="Phase" value="6 / 9" description="Admin Dashboard & Management" />
         </section>
 
         <section className="mt-10">

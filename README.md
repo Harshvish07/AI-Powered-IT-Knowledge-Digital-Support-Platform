@@ -4,11 +4,14 @@ A portfolio-quality platform combining an IT knowledge base, digital support too
 AI-assisted (RAG) answers. This repository is being built in **9 phases**; this document is
 kept up to date as each phase lands.
 
-> **Current status: Phase 5 — IT Support Ticketing.**
-> Any signed-in user can raise a support ticket at `/tickets/new`, track their own tickets at
-> `/tickets`, and comment on them. Admins see and manage every ticket at `/admin/tickets`:
-> filter/search, assign to a user, and change status/priority. Built on top of Phase 4's
-> RAG assistant, which remains unchanged.
+> **Current status: Phase 6 — Admin Dashboard & Management.**
+> `/admin` is now a real enterprise-style dashboard (sidebar, top bar, cards, charts) showing
+> live counts pulled straight from the database — users, documents, tickets, AI questions — plus
+> ticket-status/category breakdowns and a 14-day AI-usage sparkline. `/admin/users` lets admins
+> search/filter accounts and activate/deactivate them (an admin can never deactivate their own
+> account). `/admin/conversations` gives admins a metadata-only view of AI Assistant usage for
+> support/diagnostic purposes, without exposing message content. Ticket and knowledge-base
+> management (Phase 5/3) are unchanged, just reachable from the same admin sidebar now.
 
 See [`PROJECT_INFO.md`](./PROJECT_INFO.md) for the phase roadmap and project-level context,
 and [`howtocreate.md`](./howtocreate.md) for a running build log of what was done and why in
@@ -35,9 +38,10 @@ project-root/
     app/               # App Router pages: /, /login, /register, /dashboard, /admin,
                        #   /knowledge, /knowledge/[id], /knowledge/upload, /assistant,
                        #   /tickets, /tickets/new, /tickets/[id],
-                       #   /admin/tickets, /admin/tickets/[id]
+                       #   /admin/tickets, /admin/tickets/[id], /admin/users,
+                       #   /admin/conversations
     components/         # Shared UI components (incl. role-aware NavBar)
-    features/           # Feature-scoped modules (auth/, knowledge/, assistant/, tickets/)
+    features/           # Feature-scoped modules (auth/, knowledge/, assistant/, tickets/, admin/)
     hooks/               # React hooks
     lib/                 # Client utilities/config (incl. the API fetch wrapper)
     types/               # Shared TS types
@@ -49,7 +53,7 @@ project-root/
       models/            # SQLAlchemy models
       schemas/           # Pydantic schemas
       services/          # Business logic (auth; document ingestion; RAG retrieval + LLM;
-                         #   ticket visibility rules)
+                         #   ticket visibility rules; admin dashboard metrics aggregation)
       repositories/      # Data access
       scripts/           # One-off scripts (admin/knowledge-base seeds, RAG evaluation)
       seed_data/         # Static demo content for the knowledge-base seed script
@@ -205,7 +209,8 @@ self-service way to become an admin — see "Seeding an admin user" below.
 | POST | `/api/auth/refresh` | Refresh cookie | Rotates the refresh token, returns a new access token |
 | POST | `/api/auth/logout` | Refresh cookie | Revokes the refresh token, clears the cookie |
 | GET | `/api/users/me` | Bearer access token | The caller's own profile |
-| GET | `/api/users` | Bearer access token, `ADMIN` role | Lists all users (403 for non-admins) |
+| GET | `/api/users` | Bearer access token, `ADMIN` role | Lists all users (403 for non-admins); supports `?search=`/`?role=` (Phase 6) |
+| PATCH | `/api/users/{id}` | Bearer access token, `ADMIN` role | `{is_active}` — activate/deactivate; 400 if targeting your own account (Phase 6) |
 
 The access token is a short-lived JWT (15 min by default) sent as `Authorization: Bearer
 <token>` and kept in memory on the frontend (never `localStorage`). The refresh token is an
@@ -408,8 +413,66 @@ curl -s http://localhost:8000/api/tickets -H "Authorization: Bearer $TOKEN"
 ```
 
 Or through the browser: sign in, open **Tickets** in the nav bar, click **New ticket**, submit
-it, then (as an admin) open **All Tickets** to assign it and change its status — the employee
-sees the update immediately on their next visit to `/tickets/{id}`.
+it, then (as an admin) open **Admin → Tickets** to assign it and change its status — the
+employee sees the update immediately on their next visit to `/tickets/{id}`.
+
+## Admin dashboard & management
+
+`/admin` and everything under it (`/admin/tickets`, `/admin/tickets/[id]`, `/admin/users`,
+`/admin/conversations`) share a dashboard-style layout: a top bar (back to the main site, log
+out) and a sidebar linking every admin area, collapsing to a horizontal scroller on small
+screens. Every page and every API route behind it requires the `ADMIN` role — enforced by
+`require_admin` on the backend, not just by hiding the sidebar link, so a non-admin hitting any
+of these URLs directly (or the underlying API) still gets redirected/`403`d.
+
+| Method | Path | Auth required | Notes |
+|---|---|---|---|
+| GET | `/api/admin/dashboard` | Bearer, `ADMIN` | Real-time counts + chart data (see below) — nothing hardcoded |
+| GET | `/api/users` | Bearer, `ADMIN` | Now supports `?search=` (name/email) and `?role=` |
+| PATCH | `/api/users/{id}` | Bearer, `ADMIN` | `{is_active}` — 400 if an admin targets their own account |
+| GET | `/api/admin/conversations` | Bearer, `ADMIN` | Metadata only: user, title, message count, timestamps — never message content |
+
+### Dashboard metrics
+
+`GET /api/admin/dashboard` aggregates real queries (`backend/app/services/dashboard_service.py`)
+against the current database — total/active users, total/ready/failed documents, total tickets
+plus a per-status breakdown, and total AI questions (every `USER`-role `Message` ever stored)
+plus a 14-day daily breakdown for the sparkline. Three small, hand-rolled charts (no charting
+library dependency) visualize a slice of this: tickets by status, tickets by category, and AI
+questions over the last 14 days — "a small number of meaningful charts," not decoration.
+
+### User management
+
+`/admin/users` lists every account with search (name/email) and a role filter, both client-side
+over the full list (same pattern as the knowledge-base and ticket list pages). Deactivating a
+user takes effect **immediately**, not just on their next login attempt: `require_authenticated_user`
+re-checks `is_active` on every request, so an already-issued access token stops working the
+moment an admin flips the toggle. An admin can never deactivate their own account — the
+`PATCH /api/users/{id}` endpoint rejects it with `400` before touching the database, so there's
+no way to accidentally lock yourself out of the admin area.
+
+### AI conversation oversight
+
+`/admin/conversations` exists for support/diagnostic purposes only — an admin who needs to
+confirm the assistant is behaving (or that a particular user's issue is a real gap in the
+knowledge base, not user error) can see who asked how many questions and when, without reading
+the actual questions or answers. There is deliberately no endpoint that returns another user's
+message content to an admin.
+
+### Testing it manually
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"yourpassword"}' | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+
+curl -s http://localhost:8000/api/admin/dashboard -H "Authorization: Bearer $TOKEN"
+curl -s "http://localhost:8000/api/users?search=jane&role=EMPLOYEE" -H "Authorization: Bearer $TOKEN"
+curl -s http://localhost:8000/api/admin/conversations -H "Authorization: Bearer $TOKEN"
+```
+
+Or through the browser: sign in as an admin, open **Admin** in the nav bar to land on the
+dashboard, then use the sidebar to reach **Users** or **AI Conversations**.
 
 ## Architecture
 
@@ -418,4 +481,4 @@ Mermaid diagram of the current system.
 
 ## Roadmap
 
-This is Phase 5 of 9. See [`PROJECT_INFO.md`](./PROJECT_INFO.md) for the full phase breakdown.
+This is Phase 6 of 9. See [`PROJECT_INFO.md`](./PROJECT_INFO.md) for the full phase breakdown.

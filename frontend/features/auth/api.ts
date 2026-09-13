@@ -1,5 +1,5 @@
 import { apiRequest } from "@/lib/apiClient";
-import type { TokenResponse, UserPublic } from "@/types/api";
+import type { TokenResponse, UserPublic, UserRole } from "@/types/api";
 
 export function registerRequest(
   email: string,
@@ -34,6 +34,20 @@ export function getMe(accessToken: string): Promise<UserPublic> {
   return apiRequest<UserPublic>("/api/users/me", { accessToken });
 }
 
-export function listUsers(accessToken: string): Promise<UserPublic[]> {
-  return apiRequest<UserPublic[]>("/api/users", { accessToken });
+export interface ListUsersParams {
+  search?: string;
+  role?: UserRole;
+}
+
+export function listUsers(
+  accessToken: string,
+  params: ListUsersParams = {},
+): Promise<UserPublic[]> {
+  const query = new URLSearchParams();
+  if (params.search) query.set("search", params.search);
+  if (params.role) query.set("role", params.role);
+  const queryString = query.toString();
+  return apiRequest<UserPublic[]>(`/api/users${queryString ? `?${queryString}` : ""}`, {
+    accessToken,
+  });
 }

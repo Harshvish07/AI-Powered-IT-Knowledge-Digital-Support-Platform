@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import { NavBar } from "@/components/NavBar";
+import { AdminLayout } from "@/features/admin/AdminLayout";
 import { useAuth } from "@/features/auth/AuthContext";
 import { useRequireAuth } from "@/features/auth/useRequireAuth";
 import { AdminTicketControls } from "@/features/tickets/AdminTicketControls";
@@ -52,9 +52,8 @@ export default function AdminTicketDetailPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col bg-zinc-50 dark:bg-black">
-      <NavBar />
-      <main className="mx-auto w-full max-w-3xl flex-1 px-8 py-10">
+    <AdminLayout title="Ticket detail">
+      <div className="mx-auto w-full max-w-3xl">
         <Link
           href="/admin/tickets"
           className="text-sm text-zinc-500 hover:underline dark:text-zinc-400"
@@ -118,7 +117,7 @@ export default function AdminTicketDetailPage() {
             />
           </div>
         )}
-      </main>
-    </div>
+      </div>
+    </AdminLayout>
   );
 }

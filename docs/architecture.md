@@ -5,9 +5,9 @@
 The platform is a monorepo containing a Next.js frontend, a FastAPI backend, and a
 PostgreSQL + pgvector database, orchestrated locally with Docker Compose.
 
-This document reflects **Phase 1–5**: project foundation, authentication/RBAC, the
-knowledge-base document-ingestion pipeline, the RAG-powered AI IT assistant, and IT support
-ticketing.
+This document reflects **Phase 1–6**: project foundation, authentication/RBAC, the
+knowledge-base document-ingestion pipeline, the RAG-powered AI IT assistant, IT support
+ticketing, and the admin dashboard/management area.
 
 ## Diagram
 
@@ -50,9 +50,9 @@ flowchart LR
 
 | Layer | Responsibility |
 |---|---|
-| `frontend/app` | Routes and pages (Next.js App Router): `/`, `/login`, `/register`, `/dashboard`, `/admin`, `/knowledge`, `/knowledge/[id]`, `/knowledge/upload`, `/assistant`, `/tickets`, `/tickets/new`, `/tickets/[id]`, `/admin/tickets`, `/admin/tickets/[id]` |
+| `frontend/app` | Routes and pages (Next.js App Router): `/`, `/login`, `/register`, `/dashboard`, `/admin`, `/knowledge`, `/knowledge/[id]`, `/knowledge/upload`, `/assistant`, `/tickets`, `/tickets/new`, `/tickets/[id]`, `/admin/tickets`, `/admin/tickets/[id]`, `/admin/users`, `/admin/conversations` |
 | `frontend/components` | Shared, reusable presentational UI components (e.g. role-aware `NavBar`) |
-| `frontend/features` | Feature-scoped UI + logic (`auth`, `knowledge`, `assistant`, `tickets`, `system-status`) |
+| `frontend/features` | Feature-scoped UI + logic (`auth`, `knowledge`, `assistant`, `tickets`, `admin`, `system-status`) |
 | `frontend/hooks` | Reusable React hooks |
 | `frontend/lib` | Client-side utilities and configuration (API fetch wrapper) |
 | `frontend/types` | Shared TypeScript types |
@@ -60,7 +60,7 @@ flowchart LR
 | `backend/app/core` | App configuration, database session, password/JWT security, rate limiter |
 | `backend/app/models` | SQLAlchemy ORM models |
 | `backend/app/schemas` | Pydantic request/response schemas |
-| `backend/app/services` | Business logic: auth lifecycle; document ingestion pipeline; RAG retrieval (`rag_service`), embeddings (`embedding_service`), chat generation (`llm_service`); ticket ownership/visibility (`ticket_service`) |
+| `backend/app/services` | Business logic: auth lifecycle; document ingestion pipeline; RAG retrieval (`rag_service`), embeddings (`embedding_service`), chat generation (`llm_service`); ticket ownership/visibility (`ticket_service`); admin dashboard metrics aggregation (`dashboard_service`) |
 | `backend/app/repositories` | Data-access layer (queries), isolated from services |
 | `backend/app/scripts` | One-off scripts: dev admin seed, demo knowledge-base seed, RAG retrieval evaluation |
 | `backend/app/evaluation` | `questions.json` — labeled questions for the RAG evaluation harness |
@@ -167,6 +167,49 @@ entirely (not just hidden in the UI) — an employee has no route that can chang
 omission from the frontend. `TicketUpdate` requires at least one of `status`/`priority` (a
 Pydantic model validator), and comment content is validated non-blank server-side the same way
 chat messages are in Phase 4.
+
+### Admin dashboard & management (Phase 6)
+
+```mermaid
+flowchart LR
+    Dashboard["GET /api/admin/dashboard"] --> Agg["dashboard_service.get_dashboard_metrics()"]
+    Agg --> Counts["Real COUNT/GROUP BY queries:\nusers, documents, tickets, AI questions"]
+    Counts --> Charts["tickets_by_status, tickets_by_category,\nai_questions_by_day (14-day, zero-filled)"]
+
+    Users["GET/PATCH /api/users(/{id})"] --> Search["search + role filter (GET)"]
+    Users --> Toggle["is_active toggle (PATCH)"]
+    Toggle --> SelfCheck{"target == caller\nAND is_active=false?"}
+    SelfCheck -- yes --> Reject["400 — self-lockout prevented"]
+    SelfCheck -- no --> Apply["Applied immediately —\nrequire_authenticated_user re-checks\nis_active on every request"]
+
+    Conversations["GET /api/admin/conversations"] --> Meta["Metadata only: user, title,\nmessage_count, timestamps"]
+    Meta -.->|never| Content["message content (deliberately not returned)"]
+```
+
+All four surfaces are gated by `require_admin` at the dependency level (`backend/app/api/deps.py`),
+the same mechanism already protecting `/api/admin/knowledge/*` (Phase 3) and
+`/api/admin/tickets/*` (Phase 5) — so "every admin page and API must require ADMIN role" holds
+for old and new admin routes alike, and a non-admin bypassing the frontend entirely (calling the
+API directly) still gets `403`, never a hidden-but-reachable route.
+
+- **Metrics are computed on every request, not cached or hardcoded.** `dashboard_service`
+  calls straightforward `COUNT`/`GROUP BY` queries per repository (`user_repository.count_all`,
+  `ticket_repository.count_by_status`, `message_repository.count_user_messages_by_day`, etc.) —
+  at this project's scale that's fast enough to run synchronously per page load, and it means the
+  numbers can never drift from the real database state.
+- **Self-lockout is prevented server-side, not just by disabling a button.** `PATCH
+  /api/users/{id}` rejects `{is_active: false}` for the caller's own id with `400` before any
+  write happens — an admin cannot deactivate their own account even by calling the API directly.
+- **Deactivation is a real-time access revocation, not just a login gate.** Because
+  `require_authenticated_user()` re-fetches the user and re-checks `is_active` on *every*
+  request (not only at login), an already-issued access token stops working the instant an admin
+  flips the toggle — there's no window where a deactivated user's existing session keeps working
+  until it expires.
+- **Conversation oversight is metadata-only by construction.** `AdminConversationSummary` (the
+  response schema for `GET /api/admin/conversations`) has no `content`/`messages` field at all —
+  it isn't filtered out after the fact, it was never fetched from `messages` in the first place
+  (only a `GROUP BY conversation_id` count), so there's no code path that could accidentally leak
+  a user's actual questions to an admin browsing this list.
 
 ## Infrastructure
 

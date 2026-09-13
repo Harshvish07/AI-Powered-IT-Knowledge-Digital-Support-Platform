@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 
-import { NavBar } from "@/components/NavBar";
+import { AdminLayout } from "@/features/admin/AdminLayout";
 import { useRequireAuth } from "@/features/auth/useRequireAuth";
 import { TicketCard } from "@/features/tickets/TicketCard";
 import { useTicketList } from "@/features/tickets/useTicketList";
@@ -48,17 +48,8 @@ export default function AdminTicketsPage() {
   }
 
   return (
-    <div className="flex flex-1 flex-col bg-zinc-50 dark:bg-black">
-      <NavBar />
-
-      <header className="border-b border-zinc-200 bg-white px-8 py-6 dark:border-zinc-800 dark:bg-zinc-950">
-        <h1 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50">All Tickets</h1>
-        <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Every support ticket across the organization
-        </p>
-      </header>
-
-      <main className="mx-auto w-full max-w-5xl flex-1 px-8 py-10">
+    <AdminLayout title="All Tickets" description="Every support ticket across the organization">
+      <div>
         <div className="flex flex-wrap items-center gap-3">
           <input
             type="search"
@@ -122,7 +113,7 @@ export default function AdminTicketsPage() {
             </div>
           )}
         </div>
-      </main>
-    </div>
+      </div>
+    </AdminLayout>
   );
 }

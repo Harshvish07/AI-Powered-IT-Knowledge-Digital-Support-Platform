@@ -40,14 +40,9 @@ export function NavBar() {
           Tickets
         </Link>
         {user?.role === "ADMIN" ? (
-          <>
-            <Link href="/admin/tickets" className={linkClass("/admin/tickets")}>
-              All Tickets
-            </Link>
-            <Link href="/admin" className={linkClass("/admin")}>
-              Admin
-            </Link>
-          </>
+          <Link href="/admin" className={linkClass("/admin")}>
+            Admin
+          </Link>
         ) : null}
       </div>
       <div className="flex items-center gap-4">

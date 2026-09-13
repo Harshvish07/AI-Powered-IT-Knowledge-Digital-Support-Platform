@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.knowledge_document import DocumentStatus, KnowledgeDocument
@@ -8,6 +8,18 @@ from app.models.knowledge_document import DocumentStatus, KnowledgeDocument
 
 def get_by_id(db: Session, document_id: uuid.UUID) -> KnowledgeDocument | None:
     return db.get(KnowledgeDocument, document_id)
+
+
+def count_all(db: Session) -> int:
+    return db.scalar(select(func.count()).select_from(KnowledgeDocument)) or 0
+
+
+def count_by_status(db: Session) -> dict[DocumentStatus, int]:
+    counts = {status: 0 for status in DocumentStatus}
+    stmt = select(KnowledgeDocument.status, func.count()).group_by(KnowledgeDocument.status)
+    for doc_status, count in db.execute(stmt):
+        counts[doc_status] = count
+    return counts
 
 
 def list_documents(

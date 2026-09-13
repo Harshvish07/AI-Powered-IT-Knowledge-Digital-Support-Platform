@@ -51,7 +51,7 @@ functionality on top of a clean foundation, rather than building everything at o
 | 3 | Knowledge Base & Document Ingestion | ✅ Done |
 | 4 | RAG-Powered AI IT Assistant | ✅ Done |
 | 5 | IT Support Ticketing | ✅ Done |
-| 6 | TBD | ⏳ Not started |
+| 6 | Admin Dashboard & Management | ✅ Done |
 | 7 | TBD | ⏳ Not started |
 | 8 | TBD | ⏳ Not started |
 | 9 | TBD (planned: final polish / deployment) | ⏳ Not started |
@@ -125,6 +125,25 @@ Per the Phase 5 brief, the following are **not** implemented yet, on purpose:
 - SLA timers, due dates, or automatic priority/status transitions
 - Restricting who a ticket can be assigned to (any existing user, not just admins, can be the
   `assigned_to` — the brief didn't ask for that restriction)
+
+## Explicitly out of scope for Phase 6
+
+Per the Phase 6 brief, the following are **not** implemented yet, on purpose:
+
+- Role changes (promoting an employee to admin, or vice versa) — the brief only asked for
+  activate/deactivate, not role editing, so `PATCH /api/users/{id}` accepts only `is_active`
+- A conversation detail/drill-in view for admins — the brief explicitly warned against exposing
+  unnecessary sensitive information, and message content (real employee questions, which can
+  touch on security incidents, personal account issues, etc.) is exactly that; `/admin/conversations`
+  is metadata-only (title, participant, message count, timestamps) by design, with no endpoint
+  that returns message content to an admin who isn't the conversation's own owner
+- Server-side pagination for the dashboard's charts/tables — client-side filtering over the full
+  result set (same pattern as Phases 3/5) is used throughout; the admin ticket/user/conversation
+  list endpoints already accept the query params a future paginated UI would need
+- A charting library dependency — the three charts are small, hand-rolled SVG/CSS components
+  (a bar chart and a sparkline), deliberately avoiding a new dependency for "a small number of
+  meaningful charts" (the brief's own words)
+- Audit logging of admin actions (who deactivated which user, who reassigned which ticket, when)
 
 ## Key project files
 

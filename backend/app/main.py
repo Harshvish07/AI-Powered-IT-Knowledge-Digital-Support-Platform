@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
+from app.api.admin import router as admin_router
 from app.api.ai import router as ai_router
 from app.api.auth import router as auth_router
 from app.api.health import router as health_router
@@ -39,3 +40,4 @@ app.include_router(knowledge_admin_router)
 app.include_router(ai_router)
 app.include_router(tickets_router)
 app.include_router(tickets_admin_router)
+app.include_router(admin_router)

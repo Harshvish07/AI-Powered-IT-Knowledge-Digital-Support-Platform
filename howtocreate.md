@@ -1028,3 +1028,217 @@ conversations. See `PROJECT_INFO.md`'s "Explicitly out of scope for Phase 5" for
 - No optimistic UI on comment submission — the comment list only updates once the `POST`
   response returns (typically well under a second locally, but a genuinely slow network would
   show a brief lag with no immediate feedback beyond the disabled submit button).
+
+---
+
+## Phase 6 — Admin Dashboard & Management (2026-09-14)
+
+### Goal
+
+Turn `/admin` from a role-check demo page into a real enterprise-style admin area: live
+database-backed metrics and charts, and two new management surfaces (users, AI conversations)
+alongside the ticket/knowledge-base management that already existed. The brief was explicit that
+every admin page and API must require `ADMIN` server-side, not just hide a nav link, and that
+dashboard numbers must never be hardcoded.
+
+### What was created
+
+**Backend** (`backend/app/`)
+- `schemas/admin.py` — `DailyCount`, `DashboardMetrics` (10 scalar counts the brief listed by
+  name, plus `tickets_by_status`/`tickets_by_category`/`documents_by_status` dicts and a 14-day
+  `ai_questions_by_day` list — the data the three charts need), `AdminConversationSummary`
+  (deliberately has no content/messages field — see "Why these choices").
+- `services/dashboard_service.py` — `get_dashboard_metrics()`, the single function the API calls;
+  composes small aggregate queries added to each existing repository rather than introducing a
+  new cross-cutting query layer.
+- Repository additions: `user_repository.count_all/count_active/set_active`, extended
+  `list_all(search=, role=)`; `ticket_repository.count_all/count_by_status/count_by_category`;
+  `document_repository.count_all/count_by_status`; `message_repository.count_user_messages`
+  (total AI questions — every `USER`-role `Message` row), `count_user_messages_by_day(since=)`
+  (grouped by `cast(created_at, Date)`), `count_by_conversation_ids` (batch message counts for
+  the admin conversation list); `conversation_repository.list_all`.
+- `schemas/user.py` — added `created_at` to `UserPublic` (needed for the users table's "Joined"
+  column; the column already existed on the model, this just exposes it) and a new
+  `UserActiveUpdate` schema.
+- `api/users.py` — `GET /api/users` now accepts `?search=`/`?role=`; new
+  `PATCH /api/users/{id}` (admin-only) sets `is_active`, rejecting the request with `400` before
+  any write if the target is the calling admin's own account and the new value is `False`.
+- `api/admin.py` (new) — `GET /api/admin/dashboard` (calls `dashboard_service`) and
+  `GET /api/admin/conversations` (batch-resolves owner names via the same
+  `user_repository.get_by_ids` batch-lookup pattern `api/tickets.py` established in Phase 5).
+  Both `require_admin`.
+- `tests/test_admin.py` — 22 tests (see below).
+
+**Frontend** (`frontend/`)
+- `features/admin/AdminLayout.tsx` — the shared chrome for every `/admin/*` page: a top bar
+  (link back to `/dashboard`, user name, log out) and a sidebar (Dashboard/Tickets/Knowledge
+  Base/Users/AI Conversations), collapsing to a horizontal scrollable nav row below the `sm`
+  breakpoint instead of a hamburger drawer (simpler, and the link list is short enough that a
+  scroll row reads fine on a phone).
+- `features/admin/BarChart.tsx`, `Sparkline.tsx` — small hand-rolled chart components (CSS width
+  percentages for the bar chart; a plain SVG `<polyline>` for the sparkline). No charting library
+  was added — see "Why these choices."
+- `features/admin/api.ts`, `useDashboardMetrics.ts`, `useAdminUsers.ts`,
+  `useAdminConversations.ts`, `UserRow.tsx` — data-fetching hooks follow the established
+  `.then()/.catch()/.finally()`-in-`useEffect` pattern (never an async function called directly
+  in the effect body, which trips `react-hooks/set-state-in-effect` — see Problems below).
+- `app/admin/page.tsx` — rewritten from the Phase 1–5 placeholder into the real dashboard: cards
+  grouped by domain (Users / Knowledge base / Tickets / AI assistant), then the three charts.
+- `app/admin/users/page.tsx`, `app/admin/conversations/page.tsx` (new) — table UIs with
+  client-side search/filtering (same convention as `/knowledge` and `/admin/tickets`), loading/
+  error/empty states throughout, a `window.confirm()` guard before deactivating a user (same
+  confirmation-dialog approach already used for document deletion in Phase 3 — no new modal
+  library).
+- `app/admin/tickets/page.tsx` and `app/admin/tickets/[id]/page.tsx` — **retrofitted**, not
+  rewritten: swapped the old `<NavBar />` + ad hoc `<header>` for `<AdminLayout>` so the whole
+  admin section has one consistent shell; every filter, the assignment dropdown, the status/
+  priority controls, and the comment section are untouched.
+- `components/NavBar.tsx` — removed the standalone "All Tickets" link (ticket management is now
+  one click away via the admin sidebar once inside `/admin`); the "Admin" link is the only
+  admin-related entry point left in the global nav, avoiding two competing paths to the same
+  page.
+- `app/dashboard/page.tsx` — phase indicator bumped to 6/9.
+
+### Why these choices
+
+- **No charting library.** The brief's own words — "use a small number of meaningful charts,"
+  "do not create charts simply to make the dashboard look impressive" — read as a caution against
+  over-engineering this part. Three small SVG/CSS components cost nothing to add, need no new
+  `package.json` dependency (avoiding another `--renew-anon-volumes` rebuild cycle), and are
+  exactly as flexible as this dashboard needs — a percentage-width bar and a polyline sparkline
+  are not analytically sophisticated, but the brief didn't ask them to be.
+- **`AdminConversationSummary` has no content field, structurally, not just "not serialized."**
+  The safest way to guarantee "do not expose unnecessary sensitive information" is to never fetch
+  the sensitive data in the first place: `GET /api/admin/conversations` only ever runs a
+  `GROUP BY conversation_id, COUNT(*)` against `messages` for the count, never a `SELECT` of
+  `content`. A future refactor could add a field to the Pydantic schema by mistake, but it can't
+  accidentally serialize message text that was never queried.
+- **No admin conversation *detail* endpoint at all.** The brief says "view basic conversation
+  metadata," not "view conversation transcripts." Adding a detail route later is possible without
+  breaking anything (it wasn't scoped out by an irreversible design choice), but building it now,
+  unrequested, is exactly the kind of scope creep "do not add unnecessary features" warns against
+  — and it's the one piece of this phase most likely to expose something an employee typed
+  expecting privacy (a security concern, a personal account issue) to an admin who has no
+  legitimate need to read it verbatim.
+- **Self-lockout prevention is a `400` from the API, not a disabled button.** A frontend-only
+  guard (disabling the "Deactivate" button for your own row) is exactly the kind of check the
+  brief warns isn't enough — anyone could still call `PATCH /api/users/{id}` directly. The check
+  lives in `api/users.py` before the repository is ever touched, so it's enforced no matter how
+  the request arrives.
+- **Deactivation reuses the existing `is_active` check in `require_authenticated_user()` (Phase
+  2) instead of adding a new one.** That dependency already re-fetches the user and checks
+  `is_active` on every request — nothing needed to change for a deactivated user's live access
+  tokens to stop working immediately; the only genuinely new behavior was exposing a way to flip
+  the flag as an admin. Discovering that Phase 2's code already did the hard part (verified in
+  `test_deactivated_user_is_immediately_locked_out`) meant this phase could stay small here.
+- **`/admin/tickets*` were retrofitted onto `AdminLayout`, not left alone.** The brief explicitly
+  asked for a consistent sidebar/top-nav shell across the admin section ("Keep the design clean
+  and consistent") — leaving Phase 5's ticket pages on the old plain `NavBar` would mean the
+  "admin area" visually changed shells depending on which page you were on. This was scoped as a
+  chrome-only change: no ticket business logic (filters, assignment, status/priority updates,
+  comments) was touched, satisfying "do not rewrite existing functionality."
+- **Client-side filtering again, for users and conversations, matching Phases 3/5.** The backend
+  endpoints do accept real query params (`?search=`, `?role=` on `GET /api/users`) so a future
+  server-side-paginated UI has something to call, but at this project's realistic scale, loading
+  the full list once and filtering in the browser is simpler and consistent with every other list
+  page in the app.
+
+### Problems encountered & how they were resolved
+
+1. **mypy flagged `dict(db.execute(stmt).all())`** in the two new
+   `message_repository` aggregate functions (`Sequence[Row[tuple[...]]]` isn't accepted where
+   `Iterable[tuple[...]]` is expected) — the same category of SQLAlchemy/mypy friction seen with
+   `contents=batch` in Phase 3/4. Fixed by building the dict with an explicit comprehension over
+   the iterated rows instead of `dict(...)`, matching the pattern `ticket_repository`'s
+   `count_by_status`/`count_by_category` already used.
+2. **`.next/dev/types/validator.ts` briefly failed `tsc --noEmit`** ("Declaration or statement
+   expected") after several new route folders were added while the dev server was running — a
+   stale/mid-regeneration Next.js-generated route-type file, not a real error in any file this
+   phase wrote. Fixed by restarting the frontend container (the same fix Phases 3/4 needed for
+   the related "new route 404s" issue) so Next.js regenerated the file from a clean route list;
+   `tsc --noEmit` was clean immediately after.
+3. **An early draft of `/admin/users/page.tsx` called `setRows` inside a bare `useMemo(() => ...,
+   [users])`** to keep a locally-patchable copy of the user list for optimistic updates after
+   activate/deactivate — a side effect inside a value-computation hook, and a real bug (React
+   doesn't guarantee `useMemo` runs when you think it does). Caught before it shipped by re-reading
+   the diff; simplified by dropping the local copy entirely and having the activate/deactivate
+   button's `onChanged` callback just call the list hook's `refresh()` — one extra network
+   round-trip on toggle, but correct, and consistent with how `DocumentCard`/`TicketCard` already
+   handle post-mutation refreshes.
+4. **`useTicketList`-style hooks needed the same "no synchronous `setState` in the effect body"
+   discipline again** for the three new admin hooks (`useDashboardMetrics`, `useAdminUsers`,
+   `useAdminConversations`) — proactively written with the `.then()/.catch()/.finally()` pattern
+   from the start this time (the lint rule was already documented as a recurring trap after Phase
+   5's `useTicketList` fix), so `eslint` passed on the first run for all three.
+
+### Verification performed
+
+| Check | Result |
+|---|---|
+| `pytest` (backend, inside the Docker container) | ✅ 86 passed, 0 skipped, 0 failed (22 new admin tests + 64 from Phases 2–5) |
+| `ruff check .` / `black --check .` / `mypy app` (backend) | ✅ all clean |
+| `npx eslint .` / `npm run format:check` / `npx tsc --noEmit` (frontend) | ✅ all clean |
+| `npm run build` (frontend, Turbopack production build) | ✅ all 16 routes compiled, including the 3 new admin ones (`/admin/users`, `/admin/conversations`, plus the rewritten `/admin`) |
+| `docker compose` (all three services) | ✅ running throughout; migrations were already current (Phase 6 needed no new migration — every table it reads already existed) |
+| **Manual walkthrough, real dev database, no mocks** — see below | ✅ |
+
+**Manual walkthrough** (via `curl` against the live stack, using the real seeded admin account):
+`GET /api/admin/dashboard` returned real counts matching the dev database's actual contents (24
+users, 8 ready documents, the one genuine ticket a human had created through the UI earlier —
+confirmed by checking `psql` directly before trusting the number, since this runs against a
+shared dev database rather than a clean fixture) and a 14-entry `ai_questions_by_day` array.
+`GET /api/admin/conversations` returned one conversation's metadata with a correct
+`message_count` and, confirmed explicitly, no `content` or `messages` key anywhere in the
+response. `GET /api/users?role=ADMIN` returned exactly the two real admin accounts.
+Deactivate/self-lockout were both exercised against a throwaway registered account: deactivating
+it returned `is_active: false` immediately, the deactivated account's *existing* access token
+was rejected with `401` on its very next request (not just blocked at a fresh login), a fresh
+login attempt for it returned `403`, and the admin's attempt to deactivate their own account
+returned `400` with the admin's own `is_active` confirmed still `true` afterward. The throwaway
+account was deleted afterward; the one real ticket and the real conversation were left
+untouched, since they're the user's own genuine data, not test debris.
+
+### Backend test list (`backend/tests/test_admin.py`, 22 tests)
+
+Dashboard: unauthenticated `401` and employee `403` on `GET /api/admin/dashboard`; a full
+metrics assertion after creating known documents/tickets/conversation messages, checked with
+`>=` rather than `==` throughout (this suite runs against the shared dev database, which may
+already hold real data, so exact-equality assertions on global counts would be flaky by
+construction) — total/active users, total/ready/failed documents, total/open/in-progress/
+resolved tickets, AI questions, the `tickets_by_status`/`tickets_by_category`/
+`documents_by_status` breakdowns, and that `ai_questions_by_day` is always exactly 14 entries.
+Ticket filters: a combined `status`+`category`+`priority`+`search` query against
+`GET /api/admin/tickets` asserting the matching ticket is present and a deliberately
+non-matching one is absent (never a total-count assertion, for the same shared-database reason).
+User management: search by a distinctive name returns exactly that user; role filter returns
+only that role; employee `403` on both `GET /api/users` (with filters) and `PATCH
+/api/users/{id}`; activate/deactivate round-trip; deactivation's *immediate* effect on an
+already-issued token (not just the next login); self-deactivation `400` with a follow-up `GET
+/api/users/me` proving nothing was actually changed; deactivating a nonexistent user id returns
+`404`. Conversations: employee/unauthenticated denied; an admin's listing includes the right
+`user_id`/`user_name`/`user_email`/`message_count` for a conversation with 2 questions (4
+messages total) and — asserted explicitly — neither `content` nor `messages` appears anywhere in
+the response.
+
+### Not done in this phase (intentionally)
+
+Role changes (promote/demote between `EMPLOYEE`/`ADMIN`). A conversation detail/transcript view
+for admins. Server-side pagination (the query params exist; the frontend doesn't use them yet).
+A charting library. Audit logging of admin actions. See `PROJECT_INFO.md`'s "Explicitly out of
+scope for Phase 6" for the full list.
+
+### Known issues going into Phase 7
+
+- The `NavBar`/admin-sidebar double-highlighting issue noted at the end of Phase 5 is resolved
+  as a side effect of this phase's `AdminLayout` retrofit (the global `NavBar` no longer renders
+  at all on `/admin/*` pages, so there's nothing left to double-highlight) — not something this
+  phase set out to fix, but worth closing out here rather than leaving it listed as open.
+- Dashboard metrics and the admin list pages still make one full query per page load with no
+  caching; fine at this data volume, but a dashboard viewed frequently against a much larger
+  database would benefit from either caching the aggregate counts briefly or moving to
+  incrementally-maintained counters instead of `COUNT(*)`-on-read.
+- `ai_questions_by_day` always reports a fixed trailing 14-day window in UTC; there's no way to
+  pick a different range from the UI, and a very-low-traffic dev/demo instance (as observed
+  during this phase's own verification) will show a mostly-flat line with a single spike — an
+  accurate reflection of real usage, not a bug, but worth noting so a screenshot of this chart
+  isn't mistaken for a richer analytics feature than what was actually built.
