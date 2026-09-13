@@ -5,6 +5,21 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom requires calling Depends()/Security() etc.
+# in argument defaults; these are safe (evaluated once, not mutated).
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Security",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.File",
+    "fastapi.Form",
+]
+
 [tool.black]
 line-length = 100
 target-version = ["py312"]

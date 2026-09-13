@@ -7,7 +7,7 @@ from app.core.config import get_settings
 from app.core.database import Base
 
 # Import models here so Alembic autogenerate can detect them.
-# from app.models import example  # noqa: F401
+from app.models import DocumentChunk, KnowledgeDocument, RefreshToken, User  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
