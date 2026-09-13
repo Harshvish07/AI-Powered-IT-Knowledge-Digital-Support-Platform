@@ -20,6 +20,13 @@ def list_all(db: Session) -> list[User]:
     return list(db.scalars(stmt))
 
 
+def get_by_ids(db: Session, ids: set[uuid.UUID]) -> list[User]:
+    if not ids:
+        return []
+    stmt = select(User).where(User.id.in_(ids))
+    return list(db.scalars(stmt))
+
+
 def create(
     db: Session,
     *,

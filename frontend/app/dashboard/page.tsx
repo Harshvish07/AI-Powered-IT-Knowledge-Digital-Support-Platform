@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
+
 import { NavBar } from "@/components/NavBar";
-import { ModulePlaceholderCard } from "@/components/ModulePlaceholderCard";
 import { StatCard } from "@/components/StatCard";
 import { ProfileCard } from "@/features/auth/ProfileCard";
 import { useRequireAuth } from "@/features/auth/useRequireAuth";
@@ -33,22 +34,23 @@ export default function DashboardPage() {
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <ProfileCard />
           <SystemStatusCard />
-          <StatCard title="Phase" value="3 / 9" description="Knowledge Base & Document Ingestion" />
+          <StatCard title="Phase" value="5 / 9" description="IT Support Ticketing" />
         </section>
 
         <section className="mt-10">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-            Upcoming modules
+            Modules
           </h2>
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <ModulePlaceholderCard
-              title="Support Tickets"
-              description="Create, track, and resolve support requests."
-            />
-            <ModulePlaceholderCard
-              title="AI Assistant"
-              description="Retrieval-augmented answers over the knowledge base."
-            />
+            <Link
+              href="/tickets"
+              className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm transition-colors hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-700"
+            >
+              <h3 className="font-semibold text-zinc-900 dark:text-zinc-50">Support Tickets</h3>
+              <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                Create, track, and comment on IT support requests.
+              </p>
+            </Link>
           </div>
         </section>
       </main>

@@ -4,8 +4,7 @@
 
 **AI-Powered IT Knowledge & Digital Support Platform** — a portfolio-quality MVP that combines
 an IT knowledge base, a support ticketing system, and an AI assistant (RAG over the knowledge
-base). Document embeddings use the Google Gemini API; the chat/completions provider for the
-RAG assistant itself is not yet decided (a later phase).
+base). Both document embeddings and the RAG chat model use the Google Gemini API.
 
 The project is deliberately built in **9 phases**, each adding one coherent slice of
 functionality on top of a clean foundation, rather than building everything at once.
@@ -39,6 +38,9 @@ functionality on top of a clean foundation, rather than building everything at o
 | Access tokens | JWT (`PyJWT`), short-lived (15 min) | Stateless verification on every request; short expiry limits a leaked token's blast radius |
 | Refresh tokens | Opaque random token, hashed in a DB table | Lets `/api/auth/logout` actually revoke a session — a JWT-only refresh token can't be revoked before it expires |
 | Rate limiting | `slowapi` | Maintained FastAPI-native wrapper around the `limits` library; avoids hand-rolling brute-force protection |
+| Chat/completions provider | Google Gemini API (`gemini-3.6-flash`) | Same provider as embeddings — one API key, and avoids repeating the OpenAI billing-credit problem hit in Phase 3. See [`howtocreate.md`](./howtocreate.md) Phase 4. |
+| Prompt-injection defense | Explicit system-instruction rules + `<document>`-tagged retrieval context | Retrieved chunk content can come from any uploaded file, including a malicious one — the model is told exactly what to do when document text looks like an instruction: never obey it. Verified against the live model, not just described (see Phase 4 verification). |
+| Markdown rendering (chat) | `react-markdown` | LLM answers naturally come back as Markdown (bold, lists); renders it properly instead of showing literal `**`/`-` characters. Never renders raw HTML, so safe for model-generated content. |
 
 ## Phase roadmap
 
@@ -47,8 +49,8 @@ functionality on top of a clean foundation, rather than building everything at o
 | 1 | Project Foundation (repo structure, tooling, Docker, health check) | ✅ Done |
 | 2 | Authentication & Role-Based Access Control | ✅ Done |
 | 3 | Knowledge Base & Document Ingestion | ✅ Done |
-| 4 | TBD | ⏳ Not started |
-| 5 | TBD | ⏳ Not started |
+| 4 | RAG-Powered AI IT Assistant | ✅ Done |
+| 5 | IT Support Ticketing | ✅ Done |
 | 6 | TBD | ⏳ Not started |
 | 7 | TBD | ⏳ Not started |
 | 8 | TBD | ⏳ Not started |
@@ -90,6 +92,39 @@ Per the Phase 3 brief, the following are **not** implemented yet, on purpose:
 - Document versioning/history beyond a simple incrementing `version` counter (no diff view, no
   rollback to a previous version's chunks)
 - Bulk upload or bulk delete
+
+## Explicitly out of scope for Phase 4
+
+Per the Phase 4 brief, the following are **not** implemented yet, on purpose:
+
+- Support ticket functionality (still a later phase; the assistant's "no evidence" fallback
+  tells the user to create a ticket, but no ticketing system exists to create one in yet)
+- Streaming chat responses — implemented as reliable non-streaming request/response first, per
+  the brief's own explicit guidance to prioritize correctness over streaming; see
+  [`howtocreate.md`](./howtocreate.md) Phase 4 for the reasoning
+- Query rewriting / conversation-aware retrieval (each turn's retrieval is based only on that
+  turn's message text, not the full conversation history) — the LLM does see prior turns'
+  content implicitly only in the sense that they're stored, not that they're used to re-embed
+  or expand the current query
+- Answer accuracy claims beyond retrieval hit rate — `scripts/evaluate-rag.sh` measures
+  top-1/top-5 *retrieval* hit rate against labeled questions, not whether generated answers are
+  factually correct (that would need a separate LLM-graded or human-graded answer-quality eval)
+- Editing or regenerating a past assistant message
+
+## Explicitly out of scope for Phase 5
+
+Per the Phase 5 brief, the following are **not** implemented yet, on purpose:
+
+- Linking a ticket to an AI Assistant conversation (e.g. "escalate this chat to a ticket") —
+  the two Phase 4/5 features exist side by side but aren't wired together
+- Ticket attachments (screenshots, log files)
+- Email/notification alerts on ticket creation, comment, or status change
+- A dedicated audit-log/history table — comments plus `created_at`/`updated_at` on the ticket
+  itself serve as the timeline the brief asked for ("view ticket history"), without inventing a
+  new table beyond the two the brief specified (`tickets`, `ticket_comments`)
+- SLA timers, due dates, or automatic priority/status transitions
+- Restricting who a ticket can be assigned to (any existing user, not just admins, can be the
+  `assigned_to` — the brief didn't ask for that restriction)
 
 ## Key project files
 

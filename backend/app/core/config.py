@@ -47,6 +47,19 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini-embedding-001"
     embedding_dimensions: int = 1536
 
+    # ---- RAG / AI assistant ----
+    chat_model: str = "gemini-3.6-flash"
+    chat_max_output_tokens: int = 1024
+    # How many chunks to retrieve from pgvector before similarity filtering.
+    rag_top_k: int = 5
+    # Minimum cosine similarity (1 - cosine_distance) for a chunk to be used as
+    # grounding evidence. Empirically measured against the seeded demo
+    # knowledge base (gemini-embedding-001): genuinely relevant top hits
+    # scored ~0.63-0.71, while clearly off-topic questions topped out around
+    # ~0.51-0.52 — 0.55 sits cleanly between the two. Retune if real usage
+    # shows too many/few chunks passing.
+    rag_similarity_threshold: float = 0.55
+
 
 @lru_cache
 def get_settings() -> Settings:

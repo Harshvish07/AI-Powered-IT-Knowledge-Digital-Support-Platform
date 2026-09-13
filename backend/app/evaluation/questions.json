@@ -1,0 +1,92 @@
+[
+  {
+    "question": "How do I connect to the company VPN?",
+    "expected_document": "VPN Setup Guide",
+    "expected_topic": "networking"
+  },
+  {
+    "question": "What server address do I use to configure the VPN client?",
+    "expected_document": "VPN Setup Guide",
+    "expected_topic": "networking"
+  },
+  {
+    "question": "What should I do if I forgot my account password?",
+    "expected_document": "Password Reset Procedure",
+    "expected_topic": "account access"
+  },
+  {
+    "question": "How many failed login attempts before my account gets locked out?",
+    "expected_document": "Password Reset Procedure",
+    "expected_topic": "account access"
+  },
+  {
+    "question": "How do I connect my laptop to the office Wi-Fi network?",
+    "expected_document": "Wi-Fi Configuration Guide",
+    "expected_topic": "networking"
+  },
+  {
+    "question": "What's the difference between the secure and guest Wi-Fi networks?",
+    "expected_document": "Wi-Fi Configuration Guide",
+    "expected_topic": "networking"
+  },
+  {
+    "question": "How do I get access to the company GitHub organization?",
+    "expected_document": "GitHub Access Policy",
+    "expected_topic": "access control"
+  },
+  {
+    "question": "Do I need two-factor authentication enabled on my GitHub account?",
+    "expected_document": "GitHub Access Policy",
+    "expected_topic": "access control"
+  },
+  {
+    "question": "What happens to my GitHub access when I leave the company?",
+    "expected_document": "GitHub Access Policy",
+    "expected_topic": "access control"
+  },
+  {
+    "question": "What should I do immediately if my company laptop is stolen?",
+    "expected_document": "Laptop Lost/Stolen Procedure",
+    "expected_topic": "security incident"
+  },
+  {
+    "question": "Will IT wipe my laptop remotely if it's lost?",
+    "expected_document": "Laptop Lost/Stolen Procedure",
+    "expected_topic": "security incident"
+  },
+  {
+    "question": "Can I install any software I want on my work laptop?",
+    "expected_document": "Software Installation Policy",
+    "expected_topic": "policy"
+  },
+  {
+    "question": "How do I request software that isn't already pre-approved?",
+    "expected_document": "Software Installation Policy",
+    "expected_topic": "policy"
+  },
+  {
+    "question": "What security precautions should I take when working from home?",
+    "expected_document": "Remote Work Security Policy",
+    "expected_topic": "security"
+  },
+  {
+    "question": "Is it safe to use public Wi-Fi at a coffee shop for work?",
+    "expected_document": "Remote Work Security Policy",
+    "expected_topic": "security"
+  },
+  {
+    "question": "What should I be careful about during video calls and screen sharing?",
+    "expected_document": "Remote Work Security Policy",
+    "expected_topic": "security"
+  },
+  {
+    "question": "How do I enable multi-factor authentication on my account?",
+    "expected_document": "MFA Setup Guide",
+    "expected_topic": "security"
+  },
+  {
+    "question": "What do I do if I lose my phone with my authenticator app on it?",
+    "expected_document": "MFA Setup Guide",
+    "expected_topic": "security"
+  }
+]

@@ -33,3 +33,7 @@ export function logoutRequest(accessToken: string | null): Promise<{ message: st
 export function getMe(accessToken: string): Promise<UserPublic> {
   return apiRequest<UserPublic>("/api/users/me", { accessToken });
 }
+
+export function listUsers(accessToken: string): Promise<UserPublic[]> {
+  return apiRequest<UserPublic[]>("/api/users", { accessToken });
+}

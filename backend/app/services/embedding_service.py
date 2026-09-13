@@ -10,7 +10,11 @@ from app.core.config import get_settings
 # Gemini's embedContent endpoint caps how many texts can go in one call; batch
 # to stay well under that regardless of how many chunks a document produces.
 _BATCH_SIZE = 100
-_TASK_TYPE = "RETRIEVAL_DOCUMENT"
+# Gemini supports asymmetric embedding task types: documents indexed with
+# RETRIEVAL_DOCUMENT are matched more accurately against queries embedded with
+# RETRIEVAL_QUERY than if both used the same task type.
+TASK_TYPE_DOCUMENT = "RETRIEVAL_DOCUMENT"
+TASK_TYPE_QUERY = "RETRIEVAL_QUERY"
 
 
 class EmbeddingConfigurationError(Exception):
@@ -31,9 +35,16 @@ def get_client() -> genai.Client:
 
 
 def generate_embeddings(
-    texts: list[str], *, client: genai.Client | None = None
+    texts: list[str],
+    *,
+    task_type: str = TASK_TYPE_DOCUMENT,
+    client: genai.Client | None = None,
 ) -> list[list[float]]:
     """Returns one embedding vector per input text, in the same order.
+
+    `task_type` should be TASK_TYPE_DOCUMENT when indexing knowledge-base
+    chunks (the default) and TASK_TYPE_QUERY when embedding a user's question
+    for retrieval — see the module docstring above.
 
     `client` is accepted for tests to inject a mock/fake without touching the
     network; production callers should omit it.
@@ -57,7 +68,7 @@ def generate_embeddings(
                 contents=batch,  # type: ignore[arg-type]
                 config=types.EmbedContentConfig(
                     output_dimensionality=settings.embedding_dimensions,
-                    task_type=_TASK_TYPE,
+                    task_type=task_type,
                 ),
             )
             if response.embeddings is None or len(response.embeddings) != len(batch):
