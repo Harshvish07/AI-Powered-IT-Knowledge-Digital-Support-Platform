@@ -2,9 +2,13 @@
 
 ## What this is
 
-**AI-Powered IT Knowledge & Digital Support Platform** — a portfolio-quality MVP that combines
-an IT knowledge base, a support ticketing system, and an AI assistant (RAG over the knowledge
-base). Both document embeddings and the RAG chat model use the Google Gemini API.
+**AI-Powered IT Knowledge & Digital Support Platform** — a portfolio-quality, **production-oriented
+MVP** that combines an IT knowledge base, a support ticketing system, and an AI assistant (RAG
+over the knowledge base). Both document embeddings and the RAG chat model use the Google Gemini
+API. "Production-oriented" is deliberate phrasing, not "production-ready" in an absolute
+sense — see [`docs/deployment.md`](./docs/deployment.md) and [`docs/testing.md`](./docs/testing.md)
+for exactly what security/reliability work has and hasn't been done, and what a real production
+rollout would still need.
 
 The project is deliberately built in **9 phases**, each adding one coherent slice of
 functionality on top of a clean foundation, rather than building everything at once.
@@ -41,6 +45,9 @@ functionality on top of a clean foundation, rather than building everything at o
 | Chat/completions provider | Google Gemini API (`gemini-3.6-flash`) | Same provider as embeddings — one API key, and avoids repeating the OpenAI billing-credit problem hit in Phase 3. See [`howtocreate.md`](./howtocreate.md) Phase 4. |
 | Prompt-injection defense | Explicit system-instruction rules + `<document>`-tagged retrieval context | Retrieved chunk content can come from any uploaded file, including a malicious one — the model is told exactly what to do when document text looks like an instruction: never obey it. Verified against the live model, not just described (see Phase 4 verification). |
 | Markdown rendering (chat) | `react-markdown` | LLM answers naturally come back as Markdown (bold, lists); renders it properly instead of showing literal `**`/`-` characters. Never renders raw HTML, so safe for model-generated content. |
+| Structured logging | Stdlib `logging` + a small custom JSON formatter | Dependency-free (no `structlog`), sufficient at this project's scale; JSON in production for machine parsing, plain text in development for readability. See [`docs/deployment.md`](./docs/deployment.md) Phase 8. |
+| Deployment target | Single-host Docker Compose (VPS) | The same Compose file as local development plus a production overlay — genuinely simple, matching this project's actual scale, per Phase 8's explicit "not enterprise infrastructure" instruction. See [`docs/deployment.md`](./docs/deployment.md). |
+| Frontend production image | Next.js `output: "standalone"` | A minimal, self-contained server bundle with only used dependencies traced in — skips shipping `node_modules`/source into the production image entirely. |
 
 ## Phase roadmap
 
@@ -52,9 +59,9 @@ functionality on top of a clean foundation, rather than building everything at o
 | 4 | RAG-Powered AI IT Assistant | ✅ Done |
 | 5 | IT Support Ticketing | ✅ Done |
 | 6 | Admin Dashboard & Management | ✅ Done |
-| 7 | TBD | ⏳ Not started |
-| 8 | TBD | ⏳ Not started |
-| 9 | TBD (planned: final polish / deployment) | ⏳ Not started |
+| 7 | Testing, Quality & RAG Evaluation | ✅ Done |
+| 8 | Production Hardening & Deployment | ✅ Done |
+| 9 | TBD (planned: final polish) | ⏳ Not started |
 
 This table is updated as each phase is defined and completed. Detailed, dated build notes for
 every phase live in [`howtocreate.md`](./howtocreate.md).
@@ -145,9 +152,58 @@ Per the Phase 6 brief, the following are **not** implemented yet, on purpose:
   meaningful charts" (the brief's own words)
 - Audit logging of admin actions (who deactivated which user, who reassigned which ticket, when)
 
+## Explicitly out of scope for Phase 7
+
+Per the Phase 7 brief ("do not add major new product features" — this phase is reliability and
+quality work, not new functionality), the following are **not** implemented:
+
+- A CI pipeline that runs the checks in `docs/testing.md` automatically — every check documented
+  for this phase was run manually in one session; nothing currently re-runs them on every push
+- A frontend unit-test framework (Jest/Vitest + React Testing Library) — critical flows are
+  covered by Playwright E2E tests instead; see `docs/testing.md`'s "Known limitations"
+- A dedicated CSRF token mechanism — the refresh cookie's `SameSite=Lax` attribute is a partial,
+  real mitigation, documented honestly as partial rather than claimed as complete
+- A Content-Security-Policy header — added instead were the three response headers that make
+  sense for a JSON API with no HTML surface of its own (`X-Content-Type-Options`,
+  `X-Frame-Options`, `Referrer-Policy`); a real CSP has nothing meaningful to scope here since
+  the frontend is a separate Next.js application
+- Load/performance testing — nothing in this phase measures behavior under concurrent load or at
+  a data scale beyond the "large document" test's few dozen chunks
+- Executing the five new Playwright E2E specs with a real browser in this session — they were
+  authored and type-checked but not run, due to a documented low-disk-space constraint on the
+  development machine; see `docs/testing.md`'s "End-to-end tests" section for the full,
+  honest explanation and what to run to close that gap
+
+## Explicitly out of scope for Phase 8
+
+Per the Phase 8 brief ("the goal is not to create enterprise infrastructure"), the following are
+**not** implemented:
+
+- Kubernetes, a service mesh, or any multi-host orchestration — a single Docker Compose host is
+  the deliberately-chosen "simple deployment target"
+- A shared/distributed rate-limiter backend (e.g. Redis-backed `slowapi`) — the in-memory limiter
+  is documented as per-process, and that limitation is stated plainly rather than solved
+  prematurely for a project with no real multi-instance deployment yet
+- A CI pipeline — the production checklist in `docs/deployment.md` was run manually this phase;
+  nothing re-runs it automatically on every push
+- Object storage (S3-compatible) for uploaded files — still local disk, as in every prior phase;
+  documented as a real limitation for backup/scaling rather than fixed speculatively
+- A Content-Security-Policy header, a CSRF token mechanism, or dependency-vulnerability scanning
+  — each discussed honestly in `docs/deployment.md`'s "Known limitations" instead of claimed
+- Minimizing Docker image size further (e.g. Alpine base images) — the current ~390 MB/~388 MB
+  production images are a real improvement over the dev images (no dev tooling, no
+  node_modules/source in the frontend image) but not aggressively optimized; see
+  `docs/deployment.md` for why Alpine wasn't chosen for this pass
+- An automated backup schedule or restore-test — `docs/deployment.md` documents the `pg_dump`
+  commands and when to prefer a managed provider's built-in backups instead, not a backup
+  platform
+
 ## Key project files
 
 - [`README.md`](./README.md) — setup & usage instructions
 - [`docs/architecture.md`](./docs/architecture.md) — architecture write-up + Mermaid diagram
+- [`docs/testing.md`](./docs/testing.md) — testing strategy, security review, code-quality results
+- [`docs/rag-evaluation.md`](./docs/rag-evaluation.md) — RAG retrieval evaluation methodology and results
+- [`docs/deployment.md`](./docs/deployment.md) — deployment guide, production checklist, known limitations
 - [`howtocreate.md`](./howtocreate.md) — phase-by-phase build log (what was built and why)
-- [`.env.example`](./.env.example) — environment variable template
+- [`.env.example`](./.env.example) / [`.env.production.example`](./.env.production.example) — environment variable templates

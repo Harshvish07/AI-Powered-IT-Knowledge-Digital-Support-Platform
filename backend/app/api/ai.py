@@ -1,11 +1,15 @@
+import logging
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.deps import require_authenticated_user
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.limiter import limiter
+from app.core.logging_config import get_request_id
 from app.models.conversation import Conversation
 from app.models.message import MessageRole
 from app.models.user import User
@@ -19,6 +23,8 @@ from app.schemas.ai import (
     SourceCitation,
 )
 from app.services import embedding_service, llm_service, rag_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/ai", tags=["ai"])
 
@@ -74,6 +80,13 @@ def chat(
         db, conversation_id=conversation.id, role=MessageRole.USER, content=payload.message
     )
 
+    started_at = time.monotonic()
+    log_fields = {
+        "request_id": get_request_id(),
+        "user_id": str(user.id),
+        "conversation_id": str(conversation.id),
+        "model": get_settings().chat_model,
+    }
     try:
         result = rag_service.answer_question(db, payload.message)
     except (
@@ -82,10 +95,35 @@ def chat(
         llm_service.LLMConfigurationError,
         llm_service.LLMGenerationError,
     ) as exc:
+        # Deliberately excludes the question/answer text — this line is a
+        # diagnostic/metrics record, not a transcript. Full conversation
+        # content is already stored in `messages` for the owning user only,
+        # and admins only ever see conversation *metadata* (Phase 6).
+        logger.info(
+            "AI chat request failed",
+            extra={
+                **log_fields,
+                "latency_ms": round((time.monotonic() - started_at) * 1000, 1),
+                "retrieval_count": 0,
+                "outcome": "failure",
+                "error_type": type(exc).__name__,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=_SERVICE_UNAVAILABLE_MESSAGE,
         ) from exc
+
+    logger.info(
+        "AI chat request completed",
+        extra={
+            **log_fields,
+            "latency_ms": round((time.monotonic() - started_at) * 1000, 1),
+            "retrieval_count": len(result.sources),
+            "outcome": "fallback" if result.confidence == "none" else "answered",
+            "confidence": result.confidence,
+        },
+    )
 
     sources_payload = _sources_payload(result.sources)
     message_repository.create(

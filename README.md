@@ -4,14 +4,18 @@ A portfolio-quality platform combining an IT knowledge base, digital support too
 AI-assisted (RAG) answers. This repository is being built in **9 phases**; this document is
 kept up to date as each phase lands.
 
-> **Current status: Phase 6 — Admin Dashboard & Management.**
-> `/admin` is now a real enterprise-style dashboard (sidebar, top bar, cards, charts) showing
-> live counts pulled straight from the database — users, documents, tickets, AI questions — plus
-> ticket-status/category breakdowns and a 14-day AI-usage sparkline. `/admin/users` lets admins
-> search/filter accounts and activate/deactivate them (an admin can never deactivate their own
-> account). `/admin/conversations` gives admins a metadata-only view of AI Assistant usage for
-> support/diagnostic purposes, without exposing message content. Ticket and knowledge-base
-> management (Phase 5/3) are unchanged, just reachable from the same admin sidebar now.
+> **Current status: Phase 8 — Production Hardening & Deployment.**
+> This is a **production-oriented MVP**, not a claim of absolute production-readiness. This
+> phase: separated dev/test/production config with a startup guard that refuses to boot an
+> insecure production configuration; added centralized error handling (no more leaked
+> tracebacks — ever, not just when `DEBUG` happens to be set right) and structured, correlated
+> logging (a request id on every request, structured fields on every AI chat call); added
+> `GET /ready` alongside `/health`; reviewed indexes/FKs/pooling and verified all migrations
+> apply cleanly to a genuinely empty database (up **and** down); split both Dockerfiles into
+> multi-stage dev/production builds (non-root, health-checked, ~390 MB/~388 MB images, actually
+> built and smoke-tested); and wrote [`docs/deployment.md`](./docs/deployment.md) — a full
+> deployment guide with a real, verified production checklist and an honest list of known
+> limitations and remaining technical debt.
 
 See [`PROJECT_INFO.md`](./PROJECT_INFO.md) for the phase roadmap and project-level context,
 and [`howtocreate.md`](./howtocreate.md) for a running build log of what was done and why in
@@ -49,13 +53,14 @@ project-root/
   backend/             # FastAPI app
     app/
       api/               # Route definitions + auth/RBAC dependencies (deps.py)
-      core/              # Config, DB session, security (hashing/JWT), rate limiter
+      core/              # Config (+ prod-safety guard), DB session, security (hashing/JWT),
+                         #   rate limiter, structured logging
       models/            # SQLAlchemy models
       schemas/           # Pydantic schemas
       services/          # Business logic (auth; document ingestion; RAG retrieval + LLM;
                          #   ticket visibility rules; admin dashboard metrics aggregation)
       repositories/      # Data access
-      scripts/           # One-off scripts (admin/knowledge-base seeds, RAG evaluation)
+      scripts/           # One-off scripts (admin seed/promote, knowledge-base seed, RAG evaluation)
       seed_data/         # Static demo content for the knowledge-base seed script
       evaluation/        # questions.json for the RAG retrieval evaluation harness
       storage/           # Uploaded files at runtime (gitignored, created on demand)
@@ -65,10 +70,13 @@ project-root/
       main.py
     alembic/             # DB migrations
     tests/               # Pytest tests
-  docs/                # Architecture & design docs
-  scripts/             # Dev helper scripts
-  docker-compose.yml
+  docs/                # Architecture, testing, RAG evaluation & deployment docs
+  scripts/             # Dev helper scripts (seed/promote admin, seed knowledge base,
+                       #   evaluate RAG)
+  docker-compose.yml       # Local development (builds each image's `dev` stage)
+  docker-compose.prod.yml  # Production overlay (`production` stage, no bind mounts)
   .env.example
+  .env.production.example
 ```
 
 ## Prerequisites
@@ -160,11 +168,27 @@ testing plus the test suite.
 cd frontend
 npm run lint          # ESLint
 npm run format:check  # Prettier check
+npx tsc --noEmit      # TypeScript type check
 npm run test:e2e      # Playwright e2e tests (requires `npx playwright install` once)
 ```
 
 The e2e suite includes real login/register/logout flows, so the backend and database must
-also be running (`docker compose up -d postgres backend`) before `npm run test:e2e`.
+also be running (`docker compose up -d postgres backend`) before `npm run test:e2e`. Two specs
+need extra setup: `assistant.spec.ts`'s known-question test and `knowledge.spec.ts` need
+`GEMINI_API_KEY` configured (and, for the assistant test, the demo knowledge base seeded via
+`./scripts/seed-knowledge.sh`); `admin.spec.ts` and `knowledge.spec.ts` need a seeded admin
+account, passed via environment variables:
+
+```bash
+E2E_ADMIN_EMAIL=admin@example.com E2E_ADMIN_PASSWORD=yourpassword npm run test:e2e
+```
+
+Every spec that depends on one of these preconditions skips (with a clear reason) rather than
+fails if it isn't met. See [`docs/testing.md`](./docs/testing.md) for the full test architecture,
+a security review, and an honest list of what's still weak — including that these Phase 7 specs
+were authored and type-checked but not executed with a real browser in the session that wrote
+them (a documented low-disk-space constraint on that machine, not a decision to skip
+verification silently).
 
 ## Environment variables
 
@@ -256,6 +280,17 @@ then run:
 
 The script is a no-op if that user already exists, and refuses to run at all when
 `ENVIRONMENT=production`. Never put real/production credentials in `.env`.
+
+For a real deployment, see [`docs/deployment.md`](./docs/deployment.md) — register a normal
+account through the app, then promote it:
+
+```bash
+./scripts/promote-to-admin.sh someone@example.com
+# or directly: docker compose exec backend python -m app.scripts.promote_to_admin someone@example.com
+```
+
+This script works in every environment (including production) since it never handles a
+plaintext password — the account must already have registered itself.
 
 ## Knowledge base & document ingestion
 
@@ -351,18 +386,23 @@ sidebar keeps conversation history; **+ New conversation** starts a fresh thread
 
 ### RAG retrieval evaluation
 
-`backend/app/evaluation/questions.json` has 18 labeled questions (`question`,
-`expected_document`, `expected_topic`) against the demo knowledge base.
-`backend/app/scripts/evaluate_rag.py` runs real retrieval for each (no mocking) and reports
-top-1 / top-5 hit rates:
+`backend/app/evaluation/questions.json` has 27 labeled questions (`question`,
+`expected_document`, `expected_topic`) across 10 categories (VPN, Wi-Fi, password, MFA, GitHub
+access, software, security, remote work, lost laptop, and unsupported questions) against the demo
+knowledge base. `backend/app/scripts/evaluate_rag.py` runs real retrieval for each (no mocking)
+and reports Recall@1/Recall@5 for answerable questions, a correct-abstention rate for the
+unsupported-questions category, and an overall retrieval hit rate:
 
 ```bash
 ./scripts/evaluate-rag.sh
 # or directly: docker compose exec backend python -m app.scripts.evaluate_rag
 ```
 
-This measures **retrieval** quality (did the right document come back?), not generated-answer
-accuracy — see `PROJECT_INFO.md`'s "Explicitly out of scope for Phase 4" for that distinction.
+This measures **retrieval** quality (did the right document come back — or, for genuinely
+out-of-scope questions, did the system correctly find nothing?), not generated-answer accuracy —
+see [`docs/rag-evaluation.md`](./docs/rag-evaluation.md) for full methodology, current results,
+and known limitations, and `PROJECT_INFO.md`'s "Explicitly out of scope for Phase 4" for the
+retrieval-vs-answer-quality distinction.
 
 ## Support ticketing
 
@@ -474,6 +514,40 @@ curl -s http://localhost:8000/api/admin/conversations -H "Authorization: Bearer 
 Or through the browser: sign in as an admin, open **Admin** in the nav bar to land on the
 dashboard, then use the sidebar to reach **Users** or **AI Conversations**.
 
+## Testing, quality & security
+
+Phase 7 focused entirely on reliability rather than new features. See
+[`docs/testing.md`](./docs/testing.md) for the full testing strategy and architecture (backend
+Pytest suite, Playwright E2E specs, negative/adversarial testing), a line-by-line security
+review (password hashing, JWT validation, RBAC, CORS, rate limiting, file validation, SQL
+injection, XSS, secret management, authorization boundaries), current code-quality results, and
+an honest list of what's still weak — including a real bug this phase's own testing effort found
+and fixed (unhandled exceptions were leaking full tracebacks). See
+[`docs/rag-evaluation.md`](./docs/rag-evaluation.md) for the RAG retrieval evaluation
+methodology and results.
+
+## Health checks
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /health` | Liveness — is the process running at all? Checks nothing external. |
+| `GET /ready` | Readiness — is the database actually reachable right now? Returns `503` (not a crash) if not. |
+
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8000/ready
+```
+
+## Deployment
+
+See [`docs/deployment.md`](./docs/deployment.md) for the full guide: choosing a deployment
+target (a single Docker Compose host is the recommended, deliberately simple default), every
+environment variable explained, database setup/migrations/seed data, build commands for the new
+multi-stage production Docker images, backup/recovery guidance, a performance review, and a real,
+verified production checklist — plus an honest "known limitations and remaining technical debt"
+section. This project is a **production-oriented MVP**, not a claim of absolute
+production-readiness; that document says exactly what that does and doesn't mean.
+
 ## Architecture
 
 See [`docs/architecture.md`](./docs/architecture.md) for the full architecture write-up and a
@@ -481,4 +555,4 @@ Mermaid diagram of the current system.
 
 ## Roadmap
 
-This is Phase 6 of 9. See [`PROJECT_INFO.md`](./PROJECT_INFO.md) for the full phase breakdown.
+This is Phase 8 of 9. See [`PROJECT_INFO.md`](./PROJECT_INFO.md) for the full phase breakdown.

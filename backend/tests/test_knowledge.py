@@ -350,6 +350,72 @@ def test_failed_embedding_marks_document_failed_with_error(
     assert detail["error_message"]
 
 
+def test_upload_corrupted_pdf_rejected(client: TestClient, db_session: Session) -> None:
+    """A .pdf extension with non-PDF bytes must be caught by the magic-byte
+    sniff at upload time — before any storage or processing happens — not
+    merely fail later during text extraction."""
+    headers = _admin_headers(client, db_session)
+    response = _upload(
+        client,
+        headers,
+        filename="fake.pdf",
+        content=b"This is not really a PDF file, just renamed.",
+        content_type="application/pdf",
+    )
+    assert response.status_code == 415
+    assert "not a valid PDF" in response.json()["detail"]
+
+
+def test_empty_document_marks_failed_with_clear_error(
+    client: TestClient, db_session: Session, fake_embeddings: None
+) -> None:
+    """A supported file type with no extractable text content (e.g. an empty
+    .txt file) must fail cleanly at the chunking step, not crash or silently
+    produce a READY document with zero chunks."""
+    headers = _admin_headers(client, db_session)
+    response = _upload(
+        client, headers, filename="empty.txt", content=b"", content_type="text/plain"
+    )
+    document_id = uuid.UUID(response.json()["id"])
+
+    document_service.process_document(document_id, db=db_session)
+
+    detail = client.get(f"/api/knowledge/{document_id}", headers=headers).json()
+    assert detail["status"] == "FAILED"
+    assert "No extractable text" in detail["error_message"]
+
+
+def test_large_document_chunks_and_indexes_successfully(
+    client: TestClient, db_session: Session, fake_embeddings: None
+) -> None:
+    """A document large enough to produce many chunks (rather than the usual
+    single-digit chunk count in other tests) must still process end to end —
+    a reliability check that chunking/embedding isn't implicitly assuming a
+    small document."""
+    headers = _admin_headers(client, db_session)
+    # ~400 short paragraphs comfortably exceeds the default chunk size many
+    # times over, forcing dozens of chunks without approaching the upload
+    # size limit.
+    paragraphs = [
+        f"Paragraph {i}: this is filler text for a large knowledge base document "
+        "used to verify that chunking and embedding scale past a handful of chunks."
+        for i in range(400)
+    ]
+    content = "\n\n".join(paragraphs).encode("utf-8")
+
+    response = _upload(
+        client, headers, filename="large.txt", content=content, content_type="text/plain"
+    )
+    assert response.status_code == 202
+    document_id = uuid.UUID(response.json()["id"])
+
+    document_service.process_document(document_id, db=db_session)
+
+    detail = client.get(f"/api/knowledge/{document_id}", headers=headers).json()
+    assert detail["status"] == "READY"
+    assert detail["chunk_count"] > 10
+
+
 # ---- Authorization ----
 
 

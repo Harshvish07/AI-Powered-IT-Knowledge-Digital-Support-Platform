@@ -1242,3 +1242,439 @@ scope for Phase 6" for the full list.
   during this phase's own verification) will show a mostly-flat line with a single spike — an
   accurate reflection of real usage, not a bug, but worth noting so a screenshot of this chart
   isn't mistaken for a richer analytics feature than what was actually built.
+
+---
+
+## Phase 7 — Testing, Quality & RAG Evaluation (2026-09-15)
+
+### Goal
+
+No new product features — the brief was explicit about that. Find and close real gaps in test
+coverage across every area built in Phases 1–6, expand the RAG evaluation set to the ten
+requested categories with real measured results, author the five requested Playwright E2E flows,
+run an honest security review (checking, not assuming, each property), and run the full
+code-quality pipeline. The brief's own words set the bar for this phase: "do not claim a
+security feature exists unless it actually exists."
+
+### What was created
+
+**Backend** (`backend/`)
+- `tests/test_knowledge.py` — three new tests: a corrupted PDF (`.pdf` extension, non-PDF bytes)
+  rejected at upload time by the existing magic-byte check; an empty document (zero extractable
+  text) failing cleanly rather than producing a phantom `READY` document with no chunks; a
+  ~400-paragraph document producing dozens of chunks to confirm the pipeline doesn't implicitly
+  assume small inputs.
+- `tests/test_negative.py` (new file, 8 tests) — rate limiting (a real `429` on the 11th login
+  attempt within a minute), malformed JSON/missing fields/wrong types/invalid UUID path params
+  (all `422`, never `500`), SQL-injection-shaped search and login-email input (proven safe by
+  observed behavior — a normal response plus a known row confirmed to still exist afterward, not
+  just "SQLAlchemy is safe" asserted from memory), and a simulated database failure.
+- `app/core/config.py`, `app/main.py`, four `.env`/`.env.example` files — fixed the `DEBUG`
+  dead-code bug found by the database-failure test (see "A bug this phase found and fixed"
+  below): `Settings.debug` now defaults to `False`, is actually wired into
+  `FastAPI(debug=settings.debug)`, and every env template was flipped from `true` to `false`.
+- `app/main.py` — added a small `@app.middleware("http")` that sets
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and `Referrer-Policy: same-origin`
+  on every response — a minimal, uncontroversial baseline for a JSON API with no HTML surface of
+  its own, found missing during the security review.
+- `app/evaluation/questions.json` — expanded from 18 to **27** questions, restructured around
+  the ten categories the brief named (VPN, Wi-Fi, password, MFA, GitHub access, software,
+  security, remote work, lost laptop, unsupported questions), including five genuinely
+  off-topic "unsupported questions" (capital of France, pizza toppings, etc.) with
+  `expected_document: null`.
+- `app/scripts/evaluate_rag.py` — reworked to handle nullable `expected_document`: answerable
+  questions are still measured at `similarity_threshold=0.0` for pure ranking (Recall@1,
+  Recall@5), but unsupported questions are now measured against the **real, configured**
+  `RAG_SIMILARITY_THRESHOLD` — correctness there means "would production actually abstain?", not
+  "does the nearest chunk rank low?". Added a per-category breakdown and an overall combined
+  retrieval-hit-rate metric.
+
+**Frontend** (`frontend/`)
+- `tests/assistant.spec.ts`, `tests/tickets.spec.ts`, `tests/admin.spec.ts`,
+  `tests/knowledge.spec.ts` (new) — Playwright specs for Flows 2–5 plus ticket creation/details/
+  comments and knowledge-base search, following `auth.spec.ts`'s existing conventions (real
+  registration through the UI, no mocked auth). Specs that depend on a real Gemini API call or a
+  seeded admin account are written to skip with a clear message rather than fail when that
+  precondition isn't met — see "Why these choices."
+- `features/tickets/AdminTicketControls.tsx` — added `htmlFor`/`id` pairs to the status/
+  priority/assigned-to `<label>`/`<select>` pairs, found missing while writing `admin.spec.ts`
+  (Playwright's `getByLabel` couldn't find them, which is the same thing a screen reader can't
+  do — a real accessibility bug, not just a test-authoring inconvenience).
+- `app/dashboard/page.tsx` — phase indicator bumped to 7/9.
+
+**Docs** (new, per the brief's explicit "Final output" requirement)
+- `docs/testing.md` — testing strategy, backend/E2E test architecture tables, the security
+  review, code-quality results, and an honest "known limitations" section.
+- `docs/rag-evaluation.md` — evaluation methodology, the actual current results (not an
+  estimate), and the same kind of honest limitations section.
+
+### Why these choices
+
+- **The database-failure test uses a second `TestClient(app, raise_server_exceptions=False)`
+  instead of the shared `client` fixture.** Starlette's default `TestClient` behavior is to
+  *re-raise* an unhandled server-side exception into the calling test (useful for most tests,
+  since an uncaught exception usually means a real bug you want a full traceback for) rather than
+  turn it into the HTTP response a real deployed server would actually send. Testing "does the
+  HTTP response leak details" requires the *real* HTTP-response behavior, so this one test
+  deliberately opts out of that convenience.
+- **`docker compose restart` was not enough to apply the `DEBUG` fix — a discovery, not a
+  choice.** After editing `.env` and the code default, `settings.debug` was still `True` at
+  runtime. The root cause: `docker compose restart` reuses a container's environment as it was
+  at creation time; `env_file` values are only re-read on `up`/recreate. Fixed with
+  `docker compose up -d --force-recreate backend`. Documented here because it's a real, subtle
+  Docker Compose behavior that would silently un-fix this exact bug again if a future change to
+  `DEBUG` (or any other env-templated setting) were only ever "restarted" rather than recreated.
+- **Unsupported questions are evaluated at the real `RAG_SIMILARITY_THRESHOLD`, while answerable
+  questions are evaluated at `threshold=0.0`.** These measure genuinely different things and
+  conflating them would be misleading: for an answerable question, what matters is *ranking*
+  (would raising or lowering the threshold change the outcome for a question that has a right
+  answer?); for an unsupported question, what matters is the *actual production decision*
+  (does the system, as configured right now, correctly say nothing?). Using the real threshold
+  for the second case is what makes "100% correct abstention" a meaningful, checkable claim
+  rather than a favorable framing.
+- **E2E specs that need a real Gemini call or a seeded admin skip rather than fail, matching the
+  backend's own established pattern from Phase 4** (`_skip_if_upstream_unavailable`). The
+  alternative — mocking the backend from Playwright — isn't available (the real calls happen
+  inside the backend container, a separate process Playwright doesn't control), and asserting a
+  hard pass/fail against a live, quota-limited third party would make the suite flaky for
+  reasons that have nothing to do with whether the code is correct.
+- **The Playwright specs were authored and type-checked but not executed with a real browser —
+  a constraint accepted and documented, not hidden.** The development machine had under 2 GB of
+  free disk space throughout this phase (the same condition a prior session's memory note
+  already flagged as a source of zombie Chrome processes that crash *later* test runs). Launching
+  Chromium in that state risks destabilizing the whole machine over a test result. The honest
+  choice was to say so plainly in `docs/testing.md` and `PROJECT_INFO.md` rather than either
+  silently skip mentioning it or claim a passing run that didn't happen — directly following the
+  brief's own instruction not to claim something exists (here: "verified E2E coverage") unless it
+  actually does.
+- **Added security response headers and fixed the `DEBUG` leak, rather than only writing a
+  report about them.** The brief's security-review section is phrased as a checklist to
+  investigate, but where investigation turned up a real, cheap, safe fix (three response
+  headers; wiring an already-declared-but-inert setting), fixing it is more valuable than
+  documenting it as a gap and moving on — consistent with "fix warnings where practical"
+  from the code-quality section.
+
+### Problems encountered & how they were resolved
+
+1. **The database-failure test initially failed** — but not because the app was broken; because
+   `TestClient`'s default behavior re-raises the server exception into the test process instead
+   of returning it as an HTTP response. Resolved as described above (a second `TestClient` with
+   `raise_server_exceptions=False`), and doing so immediately surfaced the real `DEBUG` bug.
+2. **The `DEBUG` fix didn't take effect after `docker compose restart backend`.** Diagnosed by
+   directly inspecting `get_settings().debug` and `app.debug` inside the running container via
+   `docker compose exec backend python -c ...` rather than guessing — this showed `debug=True`
+   was still active despite both the code default and `.env` being changed, which pointed
+   straight at container-environment staleness rather than a code mistake. Resolved with
+   `docker compose up -d --force-recreate backend`, confirmed by re-running the same inspection
+   command and then the test.
+3. **mypy flagged the new security-headers middleware's `call_next` parameter** when first typed
+   loosely; resolved by importing Starlette's own `RequestResponseEndpoint` type instead of a
+   generic `object` + `# type: ignore` — the brief's code-quality section explicitly warned
+   against silencing lint/type errors rather than fixing them properly.
+4. **`ruff`/`black` initially flagged the new files** (an over-long function signature in
+   `test_admin.py`-adjacent code and a couple of formatting nits in `main.py` after the
+   middleware was added) — routine `black`-driven auto-formatting, no logic changes.
+
+### Verification performed
+
+| Check | Result |
+|---|---|
+| `pytest -q` (backend, inside the Docker container) | ✅ 95 passed, 2 skipped (real-Gemini-chat quota — see Phase 4's precedent), 0 failed, out of 97 collected |
+| `ruff check .` / `black --check .` / `mypy app` (backend) | ✅ all clean |
+| `npx eslint .` / `npm run format:check` / `npx tsc --noEmit` (frontend, including all 4 new Playwright spec files) | ✅ all clean |
+| `npm run build` (frontend, Turbopack production build) | ✅ all 16 routes compiled |
+| `docker compose up -d --force-recreate backend` + direct header inspection | ✅ `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` present on a real `curl` response |
+| `./scripts/evaluate-rag.sh` against the live seeded demo knowledge base | ✅ Recall@1 21/22 (95.5%), Recall@5 22/22 (100%), correct abstention 5/5 (100%), overall hit rate 27/27 (100%) — see `docs/rag-evaluation.md` |
+| Playwright E2E specs (`assistant.spec.ts`, `tickets.spec.ts`, `admin.spec.ts`, `knowledge.spec.ts`) | ⚠️ authored + type-checked, **not executed** with a real browser this session (documented disk-space constraint — see "Why these choices" and `docs/testing.md`) |
+
+### Backend test list additions
+
+`test_knowledge.py` (+3): corrupted PDF rejected at upload; empty document fails cleanly with a
+clear error; a large (~400-paragraph) document chunks and indexes successfully.
+
+`test_negative.py` (new, 8): rate limiting (real 429 after 10 rapid login attempts); malformed
+JSON body (422); missing required ticket fields (422); wrong field type for an enum (422);
+invalid UUID path parameter (422, not 500); SQL-injection-shaped ticket search treated as a
+literal string with the targeted row confirmed to survive; SQL-injection-shaped login email
+rejected or safely ignored (never a 500 or a successful login); an unexpected database error
+returns a generic 500 with no leaked exception text, traceback, or class name, and the app
+process remains healthy afterward.
+
+### Not done in this phase (intentionally)
+
+A CI pipeline. A frontend unit-test framework. A dedicated CSRF token mechanism. A
+Content-Security-Policy header (no HTML surface to scope one to). Load/performance testing.
+Actually executing the new Playwright specs with a browser. See `PROJECT_INFO.md`'s "Explicitly
+out of scope for Phase 7" for the full list and reasoning for each.
+
+### Known issues going into Phase 8
+
+- **The five new Playwright specs are unverified by execution.** This is the most important
+  carry-forward item from this phase: run `npm run test:e2e` (with `E2E_ADMIN_EMAIL`/
+  `E2E_ADMIN_PASSWORD` set, the stack running, migrations applied, and ideally the demo knowledge
+  base seeded) on a machine with normal disk headroom before trusting them as real regression
+  coverage, and fix whatever a first real run reveals (selector mismatches are the most likely
+  failure mode, given they were written against source-code text rather than a rendered page).
+- No CI means all of this phase's "all clean" results are a snapshot from one manual run, not an
+  enforced, ongoing guarantee — the next code change could silently regress any of them.
+- The RAG evaluation set, while now covering all ten requested categories, remains small (27
+  questions) and written by someone who already knew the answers — see
+  `docs/rag-evaluation.md`'s "Known limitations" for the full, honest caveat about what that
+  does and doesn't prove.
+- Rate limiting and the "database failure" negative test both cover one representative case each
+  (auth endpoints; one repository function raising a generic exception) rather than every
+  rate-limited endpoint or every plausible infrastructure failure mode.
+
+---
+
+## Phase 8 — Production Hardening & Deployment (2026-09-15)
+
+### Goal
+
+Make the existing MVP genuinely deployable and demonstrate real production-engineering
+practices — not build enterprise infrastructure. The brief was explicit both ways: separate
+dev/test/production configuration, centralize error handling, add structured logging and a
+readiness check, review the database/Docker setup, write a real deployment guide, and call the
+result a "production-oriented MVP," not an absolute claim of production-readiness.
+
+### What was created
+
+**Backend** (`backend/`)
+- `app/core/config.py` — `environment` is now a `Literal["development", "test", "production"]`
+  (fails fast on a typo like `ENVIRONMENT=prod`), plus new `log_level`, `db_pool_size`,
+  `db_max_overflow`, `db_pool_recycle_seconds` settings. New `assert_production_safe()`: with
+  `ENVIRONMENT=production`, refuses to start (raises `RuntimeError`, listing every problem at
+  once) if `JWT_SECRET_KEY` is still the dev default, `DEBUG` is true, `COOKIE_SECURE` is false,
+  any `CORS_ORIGINS` entry contains `localhost`/`127.0.0.1`, or `GEMINI_API_KEY` is unset.
+- `app/core/database.py` — connection pool size/overflow/recycle now explicit and configurable
+  (previously implicit SQLAlchemy defaults), `pool_pre_ping=True` retained.
+- `app/core/logging_config.py` (new) — structured logging with **no new dependency** (a ~40-line
+  custom JSON formatter, not `structlog`): JSON output in production, human-readable in
+  development, both driven by `LOG_LEVEL`. A `contextvars.ContextVar` holds the current
+  request's id so every log line emitted anywhere during that request — not just in the
+  middleware that generated the id — carries it automatically via a `logging.Filter`.
+- `app/main.py` — three additions: (1) `add_request_id` middleware, generating a UUID per
+  request (or reusing an incoming `X-Request-ID` header from a reverse proxy), setting the
+  logging contextvar, and echoing it back in the response header; (2) `configure_logging()` +
+  `assert_production_safe()` called once at import time, before the app object is even
+  constructed; (3) `handle_unexpected_exception`, a centralized `@app.exception_handler(Exception)`
+  that logs the real exception server-side (with the request id) and returns one consistent,
+  generic JSON body — `{"detail": "...", "request_id": "..."}`, with an extra `debug_detail`
+  field only when `DEBUG=true` (which, per `assert_production_safe`, can never be true in
+  production) — for anything not already handled by a route's own logic or FastAPI's built-in
+  `HTTPException`/validation handlers.
+- `app/api/health.py` — added `GET /ready`: a real `SELECT 1` against the database, returning
+  `503` (not a crash, and not the same response as `/health`) if unreachable. `/health` itself
+  is now explicitly documented as checking nothing external, by design — that's what makes it
+  the right thing for an orchestrator to restart on failure, versus `/ready` which it should
+  route around without restarting.
+- `app/api/ai.py` — the chat endpoint now logs one structured line per request (success or
+  failure) with exactly the fields the brief asked for: request id, user id, conversation id,
+  latency in milliseconds, retrieval count, model name, and outcome
+  (`answered`/`fallback`/`failure`) — deliberately **never** the question or answer text.
+- `app/scripts/promote_to_admin.py` (new) — see "Why these choices" below for why this exists:
+  promotes an already-registered user to `ADMIN` in any environment, including production,
+  because unlike `seed_admin.py` it never handles a plaintext password.
+- `backend/tests/test_config.py` (new, 8 tests) — unit tests for
+  `assert_production_safe()` against a pure `Settings` object, no HTTP client or database needed:
+  a correctly-configured production settings object passes; each of the five checks is tested
+  individually by breaking exactly one field; and a combined test confirms multiple simultaneous
+  problems are all reported in one error message, not just the first one found.
+- `backend/tests/test_health.py` — extended with `/ready` tests: happy path (real DB), and a
+  patched-connection failure path confirming a `503` with no leaked exception text.
+- `backend/tests/test_negative.py` — the Phase 7 database-failure test was updated (not
+  rewritten) to assert the new centralized handler's actual JSON shape (`detail`, `request_id`,
+  no `debug_detail`) instead of just "some generic text, not plain text" — it's stricter now
+  because the real behavior it's checking got more specific.
+- `backend/Dockerfile` — multi-stage: `base` (shared), `dev` (what `docker-compose.yml` builds —
+  hot reload, dev/test tooling, unchanged local workflow), `production` (prod dependencies only,
+  a non-root `appuser`, a `HEALTHCHECK` hitting `/health`, `uvicorn --workers 1` by default — see
+  "Why these choices" for why not more).
+- `.env`, `.env.example`, `backend/.env`, `backend/.env.example` — added `LOG_LEVEL`,
+  `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`, `DB_POOL_RECYCLE_SECONDS`, and updated comments to explain
+  the new production startup guard.
+- `.env.production.example` (new, root) — a filled-in-the-blanks template for a real deployment,
+  distinct from the development-oriented `.env.example`.
+
+**Frontend** (`frontend/`)
+- `next.config.ts` — added `output: "standalone"`, which makes the Docker `production` stage's
+  minimal runtime image possible (no `node_modules`, no source — just the traced-in production
+  server bundle).
+- `frontend/Dockerfile` — multi-stage: `deps` (shared install), `dev` (unchanged local
+  workflow), `builder` (production build — takes `NEXT_PUBLIC_API_BASE_URL` as a build `ARG`,
+  since Next.js inlines `NEXT_PUBLIC_*` variables into the client bundle at build time, not run
+  time), `production` (copies only the standalone output + static assets, runs as the `node`
+  user `node:20-slim` already ships).
+- `app/dashboard/page.tsx` — phase indicator bumped to 8/9.
+
+**Infrastructure**
+- `docker-compose.yml` — both `backend` and `frontend` builds now explicitly pin `target: dev`
+  (so local development is unaffected by the new multi-stage Dockerfiles), and both gained a
+  `healthcheck:` block (backend: a Python one-liner hitting `/health`; frontend: a Node one-liner
+  hitting `/`) — `docker compose ps` now reports real `healthy`/`unhealthy` status, and
+  `frontend` now waits on `backend`'s health check passing, not just its container starting.
+- `docker-compose.prod.yml` (new) — a production overlay: builds the `production` target for
+  both images, drops the dev bind-mount volumes, sets `restart: always`, stops publishing
+  Postgres's port to the host by default, and passes `NEXT_PUBLIC_API_BASE_URL` as a frontend
+  build arg.
+- `scripts/promote-to-admin.sh` (new) — thin wrapper for the new script, matching the existing
+  `seed-admin.sh`/`seed-knowledge.sh`/`evaluate-rag.sh` convention.
+
+**Docs**
+- `docs/deployment.md` (new, per the brief's explicit "Final output" requirement) — deployment
+  target choice and reasoning, environment variables, database setup/migrations/seed data, build
+  commands (with real, measured image sizes), health checks, backup/recovery guidance,
+  a performance review, a full API-security-review addendum to Phase 7's, a real (not aspirational)
+  production checklist, known limitations, and remaining technical debt.
+
+### Why these choices
+
+- **One `Settings` class with a startup guard, not three config classes.** The brief asked to
+  "separate development / testing / production" configuration. A parallel-class-hierarchy
+  approach (`DevSettings`/`TestSettings`/`ProdSettings`) is the more "enterprise" answer the
+  brief explicitly warned against building. Every field already has a safe local default; what
+  actually needs to differ per environment is a small, named set of values (`.env.example` vs
+  `.env.production.example` demonstrate exactly which), and `assert_production_safe()` is what
+  makes "production" a meaningfully different, *enforced* mode rather than just a string label
+  nothing reads.
+- **`assert_production_safe()` raises, not warns.** A warning is something a deploy script can
+  scroll past. Refusing to start is the only way to guarantee an insecure production boot
+  actually gets noticed — in a platform's deploy logs, immediately, not discovered later from an
+  incident. This mirrors the same philosophy as Phase 7's `DEBUG` fix: a security property that
+  can be silently ignored isn't really a security property.
+- **A new `promote_to_admin.py` script, rather than relaxing `seed_admin.py`'s production
+  guard.** Writing `docs/deployment.md`'s admin-bootstrap section surfaced a real gap: the
+  existing dev seed script is the *only* way to create an admin, and it explicitly refuses to
+  run in production (correctly — it handles a plaintext password from an environment variable,
+  which is bad practice for a real secret). Rather than weaken that guard, the actual fix is a
+  script that never touches a password in the first place: promote an account that already
+  authenticated itself through the normal, real registration flow. This is *more* secure than
+  the dev workflow, not a compromise — verified end to end with a real throwaway account
+  (register → promote → confirm `role=ADMIN` in the database → confirm idempotency → confirm the
+  "no such user" error path → clean up).
+- **A custom JSON log formatter instead of a `structlog`/`python-json-logger` dependency.** At
+  this project's scale, ~40 lines of stdlib `logging.Formatter` subclassing does everything
+  needed (structured fields, exception formatting, a request-id filter) without a new dependency
+  to track, matching the brief's "not enterprise infrastructure" framing applied to tooling
+  choices, not just deployment topology.
+- **`uvicorn --workers 1` as the production image's baked-in default, not `--workers 4` or an
+  auto-scaled count.** The rate limiter (`slowapi`) keeps its counters in-process — more workers
+  would mean the documented 20/minute and 10/minute limits get enforced independently per
+  worker, quietly loosening the real limit by a factor of worker count. Rather than hide that
+  tradeoff behind a "just add more workers for throughput" default, the Dockerfile defaults to
+  the setting that keeps the documented rate limits actually true, and `docs/deployment.md`
+  states the tradeoff explicitly (a shared Redis-backed limiter is the real fix, and is
+  explicitly listed as not implemented) rather than picking a number arbitrarily.
+- **Reusing `node:20-slim`'s built-in `node` user instead of creating a new one — discovered by
+  actually attempting the build, not assumed.** The first version of the frontend production
+  Dockerfile created a new `appuser` at uid 1000 for consistency with the backend image; the
+  build failed (`useradd: UID 1000 is not unique`) because the official Node image already
+  reserves that uid for its own `node` user. Fixed by reusing the existing user. This is exactly
+  the kind of thing that only surfaces from actually running `docker build`, not from writing a
+  Dockerfile that looks correct — see "Problems encountered" and the broader point in
+  "Verification performed" about why every claim in this phase's checklist was actually run.
+- **A single-host Docker Compose deployment as the primary, recommended target**, with
+  Render/Railway/Fly.io/Vercel mentioned only briefly as alternatives. The brief asked for "a
+  simple deployment target," and this project already has a fully-working, three-service Compose
+  setup from Phase 1 onward — recommending anything more elaborate as the *primary* path would
+  be solving a problem this project doesn't have yet.
+
+### Problems encountered & how they were resolved
+
+1. **The frontend production Docker build failed on `useradd`** — see "Why these choices" above.
+   Fixed by reusing `node:20-slim`'s existing `node` user instead of creating a second uid-1000
+   user, then rebuilt and re-verified (built, ran, curled, confirmed `whoami` reports `node`).
+2. **`docker compose restart backend` didn't apply the `DEBUG` fix in Phase 7, and the same trap
+   was avoided proactively this phase.** Every config-affecting change in Phase 8 (new
+   `Settings` fields, the production guard, the new `.env` keys) was applied via
+   `docker compose up -d --force-recreate backend`, not `restart` — a direct application of the
+   Phase 7 postmortem rather than re-discovering the same issue.
+3. **A background `docker compose build` for both images together hit this session's 120-second
+   foreground command timeout** (installing two full sets of Python/Node dependencies from
+   scratch takes longer than that). Resolved by moving it to a background task and continuing
+   other Phase 8 work (writing the admin-promotion script, updating `.env.example`) while it
+   ran, then verifying the completed build's output once notified — no loss of correctness, just
+   sequencing around a tooling constraint.
+4. **Verifying migrations against "an empty database" without touching the real dev database**
+   required actually standing up a disposable resource, not just reasoning about it: a
+   throwaway `pgvector/pgvector:pg16` container on the same Docker network, with a fresh
+   never-before-used database name. `alembic upgrade head` and then `alembic downgrade base`
+   were both run against it and inspected directly (`\dt`) before the container was destroyed —
+   the real dev database (with the user's own genuine ticket/conversation data from earlier
+   phases) was never at risk.
+5. **`docker-compose.prod.yml`'s `volumes: []` and `ports: []` overrides silently did nothing.**
+   Discovered by actually resolving the merged config with `docker compose config` rather than
+   trusting that the override looked correct: Compose *merges* list-valued keys like
+   `volumes`/`ports` across `-f` files by default, so a plain `[]` in the override file doesn't
+   clear the base file's entries — they survive untouched. Fixed by using the Compose
+   Specification's `!reset` tag (`volumes: !reset []`) on all three overrides, then re-verified
+   the same way (parsed the merged config again and confirmed the entries were actually gone).
+   **Running that verification command once printed a real secret value** (the project's live
+   `GEMINI_API_KEY`, resolved from the real `.env` file) directly into the session — `docker
+   compose config` resolves and displays every interpolated environment variable, including
+   secrets, which isn't obvious from the command's name. Flagged to the user immediately with a
+   recommendation to rotate that key, and every subsequent check of the merged config was instead
+   redirected to a local file and inspected with `grep` scoped to only the `volumes`/`ports`
+   lines — never the `environment:` block — so no further secret values were ever displayed
+   again. This is recorded here rather than smoothed over, in keeping with this whole phase's
+   standard of not claiming a security property (in this case, "secrets are never exposed in the
+   tooling process itself") without being honest about a real lapse.
+
+### Verification performed
+
+| Check | Result |
+|---|---|
+| `pytest -q` (backend, inside the Docker container) | ✅ 105 passed, 2 skipped (real-Gemini-chat quota — Phase 4's precedent), 0 failed |
+| `ruff check .` / `black --check .` / `mypy app` (backend) | ✅ all clean |
+| `npx eslint .` / `npm run format:check` / `npx tsc --noEmit` (frontend) | ✅ all clean |
+| `npm run build` (frontend, Turbopack production build, with `output: "standalone"`) | ✅ all 16 routes compiled |
+| `alembic upgrade head` against a disposable, genuinely empty Postgres container | ✅ all 6 migrations applied in order, all 9 tables present |
+| `alembic downgrade base` against the same disposable container | ✅ every migration's downgrade ran cleanly, in reverse order |
+| `docker compose up` with the new multi-stage Dockerfiles + Compose health checks | ✅ all three services report `healthy`; `/health`, `/ready`, and the frontend root all return `200` |
+| `docker build --target production` (backend) | ✅ built (390 MB), ran, `curl /health` → `200`, confirmed `whoami` → `appuser` |
+| `docker build --target production --build-arg NEXT_PUBLIC_API_BASE_URL=...` (frontend) | ✅ built (388 MB) after fixing the uid collision, ran, served `200` on `/`, confirmed `whoami` → `node` |
+| `X-Request-ID` propagation | ✅ present on every response, confirmed via `curl -D -` |
+| `promote_to_admin.py` end-to-end | ✅ registered a real throwaway account, confirmed `EMPLOYEE` → promoted → confirmed `ADMIN` in the database directly, confirmed idempotency and the not-found error path, cleaned up |
+| `pydantic-settings` JSON-array parsing for `CORS_ORIGINS` | ✅ confirmed directly (`Settings()` with a JSON-array-shaped env var produces the expected `list[str]`) before documenting it as a fact in `.env.production.example`, not assumed |
+
+### Backend test list additions
+
+`test_config.py` (new, 8 tests): a correctly-configured production `Settings` object passes;
+development is never blocked regardless of how "unsafe" its individual fields look; each of the
+five production checks (dev-default JWT secret, `DEBUG=true`, insecure cookie, a localhost CORS
+origin, missing Gemini key) is tested individually by breaking exactly one field; and a combined
+test confirms three simultaneous problems all appear in one raised error's message.
+
+`test_health.py` (+2): `/ready` returns `200`/`{"status": "ready"}` against the real database;
+`/ready` returns `503`/`{"status": "not_ready"}` when the database connection is patched to
+fail, with the simulated failure's own message confirmed absent from the response.
+
+`test_negative.py` (updated, not net-new): the existing database-failure test now asserts the
+centralized handler's precise JSON shape rather than a looser "no leaked substring" check.
+
+### Not done in this phase (intentionally)
+
+Kubernetes or any multi-host orchestration. A shared/distributed rate-limiter backend. A CI
+pipeline. Object storage for uploads. A Content-Security-Policy header, a CSRF token mechanism,
+or dependency-vulnerability scanning. Further Docker image size optimization (e.g. Alpine base
+images). An automated backup schedule or restore test. See `PROJECT_INFO.md`'s "Explicitly out
+of scope for Phase 8" for the full list and reasoning for each.
+
+### Known issues going into Phase 9
+
+- **Rate limiting's in-memory, per-process nature is now a documented, intentional limitation
+  rather than an oversight** — but it's still there, and would need a real fix (shared Redis
+  backend) before this platform could correctly enforce its documented limits across more than
+  one backend process.
+- **No CI** means every "all clean" result recorded in this phase's verification table is a
+  snapshot from one manual run on 2026-09-15, not an ongoing guarantee.
+- **Docker images are functional but not minimal** (~390 MB / ~388 MB) — real headroom exists to
+  shrink both further, deliberately not pursued this phase (see "Why these choices" for the
+  Alpine/musl-libc risk tradeoff).
+- **The Phase 7 Playwright E2E specs remain unexecuted with a real browser** — this phase didn't
+  attempt to close that gap (the same disk-space constraint from Phase 7 was still present), so
+  it carries forward unchanged rather than being silently dropped from the record.
+- **`assert_production_safe()` checks five specific settings, not configuration exhaustively** —
+  e.g. it wouldn't catch a weak-but-technically-different `JWT_SECRET_KEY`, or an unreasonably
+  long `ACCESS_TOKEN_EXPIRE_MINUTES`. It closes the specific gaps this phase's review actually
+  found, not every conceivable misconfiguration.

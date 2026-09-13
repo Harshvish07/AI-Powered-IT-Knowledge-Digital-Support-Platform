@@ -19,6 +19,10 @@ services:
   backend:
     build:
       context: ./backend
+      # This compose file is the local-development entry point, so it always
+      # builds the `dev` stage (hot reload, dev/test tooling included) —
+      # see docs/deployment.md for building/running the `production` stage.
+      target: dev
     restart: unless-stopped
     env_file:
       - .env
@@ -31,10 +35,23 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status == 200 else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   frontend:
     build:
       context: ./frontend
+      target: dev
     restart: unless-stopped
     env_file:
       - .env
@@ -50,7 +67,20 @@ services:
       - /app/node_modules
       - /app/.next
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "require('http').get('http://localhost:3000/', r => process.exit(r.statusCode < 500 ? 0 : 1)).on('error', () => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
 volumes:
   postgres_data:

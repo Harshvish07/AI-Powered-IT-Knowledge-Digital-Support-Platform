@@ -5,9 +5,13 @@
 The platform is a monorepo containing a Next.js frontend, a FastAPI backend, and a
 PostgreSQL + pgvector database, orchestrated locally with Docker Compose.
 
-This document reflects **Phase 1–6**: project foundation, authentication/RBAC, the
+This document reflects **Phase 1–8**: project foundation, authentication/RBAC, the
 knowledge-base document-ingestion pipeline, the RAG-powered AI IT assistant, IT support
-ticketing, and the admin dashboard/management area.
+ticketing, the admin dashboard/management area, a Phase 7 testing/reliability/security
+hardening pass, and a Phase 8 production-hardening/deployment pass (see
+[`docs/testing.md`](./testing.md), [`docs/rag-evaluation.md`](./rag-evaluation.md), and
+[`docs/deployment.md`](./deployment.md) — neither Phase 7 nor 8 added new product flows, so
+neither is diagrammed separately here).
 
 ## Diagram
 
@@ -224,10 +228,30 @@ API directly) still gets `403`, never a hidden-but-reachable route.
   goes with its owner) while `tickets.assigned_to` and `ticket_comments.user_id` are `SET NULL`
   (a ticket and its comment history outlive the removal of an assignee or commenter).
 - **backend**: FastAPI app served by Uvicorn, hot-reloading in development, connecting to
-  Postgres via SQLAlchemy + psycopg. Uploaded files are stored on the backend's local
+  Postgres via SQLAlchemy + psycopg (connection pool size/overflow/recycle configurable via
+  `DB_POOL_*` settings as of Phase 8). Uploaded files are stored on the backend's local
   filesystem (`backend/storage/uploads/`, gitignored) — not yet object storage (S3-compatible),
-  which would be the natural next step for a real deployment.
-- **frontend**: Next.js dev server, calling the backend via `NEXT_PUBLIC_API_BASE_URL`.
+  which would be the natural next step for a real deployment. Every response carries a small,
+  fixed set of security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy` —
+  `app/main.py`, added Phase 7) and a request id (`X-Request-ID`, added Phase 8 — generated per
+  request or reused from an incoming header, propagated through a contextvar so every log line
+  for that request is correlated — see `app/core/logging_config.py`). `Settings.debug` genuinely
+  gates FastAPI's traceback-on-500 behavior (`app = FastAPI(..., debug=settings.debug)`) and
+  defaults to `False` everywhere; as of Phase 8, a centralized `@app.exception_handler(Exception)`
+  additionally guarantees a consistent, generic JSON body for any unhandled exception regardless
+  of `debug`, and `assert_production_safe()` refuses to boot at all with
+  `ENVIRONMENT=production` and an insecure setting (dev-default JWT secret, `DEBUG=true`,
+  `COOKIE_SECURE=false`, a `localhost` CORS origin, or a missing Gemini key) — see
+  `docs/deployment.md`. `GET /health` (liveness) and `GET /ready` (readiness — a real
+  `SELECT 1`) are both Phase 8 additions.
+- **frontend**: Next.js dev server in development (hot reload); `output: "standalone"` (Phase 8)
+  produces a minimal, self-contained production server bundle for the Docker `production` stage.
+  Calls the backend via `NEXT_PUBLIC_API_BASE_URL` — note that this must be set at Docker *build*
+  time for production images, since Next.js inlines `NEXT_PUBLIC_*` variables into the
+  client-side bundle (see `docs/deployment.md`).
 
 All three services are defined in the root [`docker-compose.yml`](../docker-compose.yml) and
-started together with `docker compose up`.
+started together with `docker compose up` (development — builds each image's `dev` stage).
+[`docker-compose.prod.yml`](../docker-compose.prod.yml) (Phase 8) is a production overlay:
+builds each image's `production` stage instead (lean, non-root, `HEALTHCHECK`-equipped — see
+both `Dockerfile`s), drops the dev bind-mount volumes, and sets `restart: always`.

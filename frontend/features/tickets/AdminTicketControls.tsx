@@ -72,10 +72,14 @@ export function AdminTicketControls({ ticket, onUpdated }: AdminTicketControlsPr
   return (
     <div className="mt-6 grid grid-cols-1 gap-4 border-t border-zinc-100 pt-6 sm:grid-cols-3 dark:border-zinc-800">
       <div>
-        <label className="block text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <label
+          htmlFor="ticket-status"
+          className="block text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
+        >
           Status
         </label>
         <select
+          id="ticket-status"
           value={ticket.status}
           disabled={busy}
           onChange={(event) => handleStatusChange(event.target.value as TicketStatus)}
@@ -90,10 +94,14 @@ export function AdminTicketControls({ ticket, onUpdated }: AdminTicketControlsPr
       </div>
 
       <div>
-        <label className="block text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <label
+          htmlFor="ticket-priority"
+          className="block text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
+        >
           Priority
         </label>
         <select
+          id="ticket-priority"
           value={ticket.priority}
           disabled={busy}
           onChange={(event) => handlePriorityChange(event.target.value as TicketPriority)}
@@ -108,10 +116,14 @@ export function AdminTicketControls({ ticket, onUpdated }: AdminTicketControlsPr
       </div>
 
       <div>
-        <label className="block text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+        <label
+          htmlFor="ticket-assigned-to"
+          className="block text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400"
+        >
           Assigned to
         </label>
         <select
+          id="ticket-assigned-to"
           value={ticket.assigned_to ?? ""}
           disabled={busy}
           onChange={(event) => handleAssignChange(event.target.value)}

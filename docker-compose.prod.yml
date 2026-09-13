@@ -1,0 +1,43 @@
+# Production overlay for docker-compose.yml — see docs/deployment.md for the
+# full deployment guide. Usage:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# This is a single-host Docker Compose deployment: a genuinely simple target
+# appropriate for this project's scale, not a Kubernetes manifest. It builds
+# each image's `production` stage (lean, non-root, no hot reload) instead of
+# `dev`, and removes the bind-mount volumes dev relies on for live code
+# reloading — the production image is self-contained.
+services:
+  postgres:
+    restart: always
+    # No host port published by default in production — only the backend
+    # container (on the same Compose network) needs to reach Postgres.
+    # Remove this override if you need host access for e.g. `pg_dump` from
+    # outside the Docker network.
+    #
+    # `!reset` (not a plain `[]`) is required here and below — Compose
+    # *merges* list-valued keys like `ports`/`volumes` across files by
+    # default, so a plain `[]` override is silently ignored and the base
+    # file's entries survive. Verified directly with `docker compose config`
+    # before and after adding `!reset`: without it, this container still
+    # published 5432 to the host despite this override.
+    ports: !reset []
+
+  backend:
+    build:
+      target: production
+    restart: always
+    volumes: !reset []
+    environment:
+      ENVIRONMENT: production
+
+  frontend:
+    build:
+      target: production
+      args:
+        # NEXT_PUBLIC_API_BASE_URL must be set here (a build arg), not just
+        # in .env — see frontend/Dockerfile's comment on why.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}
+    restart: always
+    volumes: !reset []
